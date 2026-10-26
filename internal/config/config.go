@@ -21,6 +21,7 @@ type Config struct {
 	Addr string
 
 	MaxBodyBytes   int64
+	MaxValueBytes  int
 	IngestMaxBatch int
 
 	PurgeInterval   time.Duration
@@ -61,7 +62,8 @@ func load(getenv func(string) string) (Config, error) {
 		DBDriver:        get("TASKIQ_ADMIN_DB_DRIVER", "sqlite"),
 		DBFilePath:      get("TASKIQ_ADMIN_DB_FILE_PATH", "database/database.db"),
 		Addr:            net.JoinHostPort(get("HOST", "0.0.0.0"), get("PORT", "3000")),
-		MaxBodyBytes:    int64(intVar("TASKIQ_ADMIN_MAX_BODY_BYTES", 1<<20)),
+		MaxBodyBytes:    int64(intVar("TASKIQ_ADMIN_MAX_BODY_BYTES", 64<<20)),
+		MaxValueBytes:   intVar("TASKIQ_ADMIN_MAX_VALUE_BYTES", 64<<10),
 		IngestMaxBatch:  intVar("TASKIQ_ADMIN_INGEST_MAX_BATCH", 500),
 		PurgeInterval:   durVar("TASKIQ_ADMIN_PURGE_INTERVAL", time.Minute),
 		PurgeBatchSize:  intVar("TASKIQ_ADMIN_PURGE_BATCH_SIZE", 1000),

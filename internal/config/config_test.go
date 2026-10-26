@@ -14,7 +14,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != "0.0.0.0:3000" || c.DBDriver != "sqlite" || c.PurgeInterval != time.Minute || c.PurgeBatchSize != 1000 {
+	if c.Addr != "0.0.0.0:3000" || c.DBDriver != "sqlite" || c.PurgeInterval != time.Minute || c.PurgeBatchSize != 1000 || c.MaxBodyBytes != 64<<20 || c.MaxValueBytes != 64<<10 {
 		t.Fatalf("%+v", c)
 	}
 }

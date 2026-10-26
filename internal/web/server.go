@@ -28,6 +28,8 @@ var staticFS embed.FS
 type Options struct {
 	APIToken     string
 	MaxBodyBytes int64
+	// MaxValueBytes caps each stored args, kwargs and return value (0: no cap).
+	MaxValueBytes int
 	// PurgeInfo is shown on the settings page.
 	PurgeInterval  time.Duration
 	PurgeBatchSize int
@@ -119,10 +121,13 @@ func (s *Server) handleEvent(kind task.Kind) http.HandlerFunc {
 			return
 		}
 		body := http.MaxBytesReader(w, r.Body, s.opts.MaxBodyBytes)
-		ev, err := decodeEvent(kind, r.PathValue("id"), body, s.now())
+		ev, err := decodeEvent(kind, r.PathValue("id"), body, s.now(), s.opts.MaxValueBytes)
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
+				// The task loses this lifecycle step: say so, the middleware only
+				// logs it on the worker.
+				s.log.Warn("rejected task event: body too large", "task_id", r.PathValue("id"), "kind", kind.String(), "limit_bytes", tooLarge.Limit)
 				writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
 				return
 			}

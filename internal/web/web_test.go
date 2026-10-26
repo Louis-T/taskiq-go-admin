@@ -42,7 +42,7 @@ func newEnv(t *testing.T) *env {
 	ing.OnCommit = hub.Publish
 	go ing.Run()
 	purger := maintenance.NewPurger(st, time.Minute, maintenance.BatchConfig{Size: 100}, log)
-	s, err := NewServer(Options{APIToken: token, MaxBodyBytes: 1 << 20, PurgeInterval: time.Minute, PurgeBatchSize: 100, Version: "v-test"}, st, ing, purger, hub, log)
+	s, err := NewServer(Options{APIToken: token, MaxBodyBytes: 4 << 20, MaxValueBytes: 64 << 10, PurgeInterval: time.Minute, PurgeBatchSize: 100, Version: "v-test"}, st, ing, purger, hub, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,30 +181,59 @@ func TestIngestRejectsGarbage(t *testing.T) {
 			t.Errorf("%s %s: %d", path, body, r.StatusCode)
 		}
 	}
-	big := `{"args":["` + strings.Repeat("a", 2<<20) + `"]}`
+	big := `{"args":["` + strings.Repeat("a", 5<<20) + `"]}`
 	if r := e.post(t, "/api/tasks/big/queued", big, token); r.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("big body: %d", r.StatusCode)
 	}
 }
 
+// A report too big to store whole (taskiq passes ML vectors through args and
+// return values) must still move the task through its lifecycle.
+func TestIngestOversizedValues(t *testing.T) {
+	e := newEnv(t)
+	vectors := `[` + strings.Repeat(`0.123456789,`, 200_000) + `0]`
+	for _, step := range []struct{ kind, body string }{
+		{"queued", `{"args":[` + vectors + `],"kwargs":{},"labels":{"queue_name":"q"},"queuedAt":"2026-01-02T10:00:00","taskName":"app:upsert","worker":"w"}`},
+		{"started", `{"args":[` + vectors + `],"kwargs":{},"labels":{"queue_name":"q"},"startedAt":"2026-01-02T10:00:01","taskName":"app:upsert","worker":"w"}`},
+		{"executed", `{"finishedAt":"2026-01-02T10:00:02","executionTime":1,"error":null,"returnValue":{"return_value":` + vectors + `}}`},
+	} {
+		if r := e.post(t, "/api/tasks/huge/"+step.kind, step.body, token); r.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d", step.kind, r.StatusCode)
+		}
+	}
+	got, err := e.store.GetTask(context.Background(), "huge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != task.Success || got.Name != "app:upsert" || string(got.Labels) != `{"queue_name":"q"}` || string(got.Kwargs) != `{}` {
+		t.Fatalf("got %+v", got)
+	}
+	if !strings.HasPrefix(string(got.Args), `{"truncated":true,"bytes":2400005,"preview":"[[0.123456789,`) || len(got.Args) > 300 {
+		t.Fatalf("oversized args not replaced: %.300s", got.Args)
+	}
+	if !strings.HasPrefix(string(got.ReturnValue), `{"return_value":{"truncated":true,"bytes":2400003,"preview":"[0.123456789,`) {
+		t.Fatalf("oversized return value not replaced: %.300s", got.ReturnValue)
+	}
+}
+
 func TestDecodeEventLenient(t *testing.T) {
 	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	e, err := decodeEvent(task.KindQueued, "id", strings.NewReader(`{"taskName":"t","unknown":1,"worker":null}`), now)
+	e, err := decodeEvent(task.KindQueued, "id", strings.NewReader(`{"taskName":"t","unknown":1,"worker":null}`), now, 0)
 	if err != nil || !e.At.Equal(now) || e.Name != "t" || e.Worker != nil {
 		t.Fatalf("%+v %v", e, err)
 	}
-	e, err = decodeEvent(task.KindExecuted, "id", strings.NewReader(`{"finishedAt":1767348000,"executionTime":"0.5","error":""}`), now)
+	e, err = decodeEvent(task.KindExecuted, "id", strings.NewReader(`{"finishedAt":1767348000,"executionTime":"0.5","error":""}`), now, 0)
 	if err != nil || e.At.Unix() != 1767348000 || *e.ExecutionTime != 0.5 || e.Error != nil {
 		t.Fatalf("%+v %v", e, err)
 	}
-	e, _ = decodeEvent(task.KindExecuted, "id", strings.NewReader(`{"finishedAt":"2026-01-02T10:00:00+02:00","error":{"type":"X"}}`), now)
+	e, _ = decodeEvent(task.KindExecuted, "id", strings.NewReader(`{"finishedAt":"2026-01-02T10:00:00+02:00","error":{"type":"X"}}`), now, 0)
 	if e.At.Format(time.RFC3339) != "2026-01-02T08:00:00Z" || *e.Error != `{"type":"X"}` {
 		t.Fatalf("%+v", e)
 	}
-	if _, err := decodeEvent(task.KindQueued, strings.Repeat("x", 600), strings.NewReader(`{}`), now); err == nil {
+	if _, err := decodeEvent(task.KindQueued, strings.Repeat("x", 600), strings.NewReader(`{}`), now, 0); err == nil {
 		t.Fatal("long id accepted")
 	}
-	e, _ = decodeEvent(task.KindStarted, "id", strings.NewReader(``), now)
+	e, _ = decodeEvent(task.KindStarted, "id", strings.NewReader(``), now, 0)
 	if !e.At.Equal(now) {
 		t.Fatal("empty body")
 	}

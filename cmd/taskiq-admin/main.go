@@ -109,6 +109,7 @@ func run() error {
 	srv, err := web.NewServer(web.Options{
 		APIToken:       cfg.APIToken,
 		MaxBodyBytes:   cfg.MaxBodyBytes,
+		MaxValueBytes:  cfg.MaxValueBytes,
 		PurgeInterval:  cfg.PurgeInterval,
 		PurgeBatchSize: cfg.PurgeBatchSize,
 		Version:        buildVersion(),

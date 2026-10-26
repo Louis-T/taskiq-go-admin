@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/louis-t/taskiq-go-admin/internal/task"
 )
@@ -22,7 +23,9 @@ import (
 // Parsing is deliberately lenient: unknown fields are ignored, a missing
 // timestamp defaults to the reception time, and values of an unexpected JSON
 // type are kept rather than rejected. Losing a report is worse than storing
-// an odd value.
+// an odd value: for the same reason, args, kwargs or a return value larger
+// than maxValueBytes is replaced by a small marker instead of failing the
+// event (taskiq tasks may pass megabytes of ML vectors around).
 type lifecyclePayload struct {
 	TaskName  json.RawMessage `json:"taskName"`
 	Args      json.RawMessage `json:"args"`
@@ -42,7 +45,7 @@ type executedPayload struct {
 
 const maxTaskIDLength = 512
 
-func decodeEvent(kind task.Kind, taskID string, body io.Reader, now time.Time) (task.Event, error) {
+func decodeEvent(kind task.Kind, taskID string, body io.Reader, now time.Time, maxValueBytes int) (task.Event, error) {
 	if taskID == "" || len(taskID) > maxTaskIDLength {
 		return task.Event{}, fmt.Errorf("task id must be 1 to %d bytes long", maxTaskIDLength)
 	}
@@ -71,8 +74,8 @@ func decodeEvent(kind task.Kind, taskID string, body io.Reader, now time.Time) (
 		if s := jsonString(p.TaskName); s != nil {
 			e.Name = *s
 		}
-		e.Args = normalizeJSON(p.Args)
-		e.Kwargs = normalizeJSON(p.Kwargs)
+		e.Args = capJSON(normalizeJSON(p.Args), maxValueBytes)
+		e.Kwargs = capJSON(normalizeJSON(p.Kwargs), maxValueBytes)
 		e.Labels = normalizeJSON(p.Labels)
 		e.Worker = jsonString(p.Worker)
 
@@ -91,7 +94,7 @@ func decodeEvent(kind task.Kind, taskID string, body io.Reader, now time.Time) (
 		if s := jsonString(p.Error); s != nil && *s != "" {
 			e.Error = s
 		}
-		e.ReturnValue = normalizeJSON(p.ReturnValue)
+		e.ReturnValue = capReturnValue(normalizeJSON(p.ReturnValue), maxValueBytes)
 	}
 	return e, nil
 }
@@ -121,6 +124,41 @@ func normalizeJSON(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	return bytes.TrimRight(buf.Bytes(), "\n")
+}
+
+// previewBytes is how much of an oversized value its marker keeps.
+const previewBytes = 200
+
+// capJSON replaces a value longer than limit bytes (0: no limit) with a
+// marker recording its size and its beginning.
+func capJSON(raw json.RawMessage, limit int) json.RawMessage {
+	if limit <= 0 || len(raw) <= limit {
+		return raw
+	}
+	cut := min(previewBytes, len(raw))
+	for cut > 0 && cut < len(raw) && !utf8.RuneStart(raw[cut]) {
+		cut--
+	}
+	marker, _ := json.Marshal(struct {
+		Truncated bool   `json:"truncated"`
+		Bytes     int    `json:"bytes"`
+		Preview   string `json:"preview"`
+	}{true, len(raw), string(raw[:cut]) + "…"})
+	return marker
+}
+
+// capReturnValue caps the result inside the middleware's {"return_value": x}
+// wrapper, so the stored shape stays the same.
+func capReturnValue(raw json.RawMessage, limit int) json.RawMessage {
+	if limit <= 0 || len(raw) <= limit {
+		return raw
+	}
+	var wrapper map[string]json.RawMessage
+	if json.Unmarshal(raw, &wrapper) != nil || len(wrapper) != 1 || wrapper["return_value"] == nil {
+		return capJSON(raw, limit)
+	}
+	out, _ := json.Marshal(map[string]json.RawMessage{"return_value": capJSON(wrapper["return_value"], limit)})
+	return out
 }
 
 // jsonString returns a JSON string's value, the raw JSON text of any other

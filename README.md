@@ -70,7 +70,8 @@ Open http://localhost:3000.
 | `TASKIQ_ADMIN_PURGE_INTERVAL` | `1m` | how often the TTL cleanup runs |
 | `TASKIQ_ADMIN_PURGE_BATCH_SIZE` / `_PAUSE` | `1000` / `50ms` | rows per cleanup transaction, pause between batches |
 | `TASKIQ_ADMIN_INGEST_MAX_BATCH` | `500` | most events committed in one transaction |
-| `TASKIQ_ADMIN_MAX_BODY_BYTES` | `1048576` | largest middleware report accepted (1 MiB) |
+| `TASKIQ_ADMIN_MAX_BODY_BYTES` | `67108864` | largest middleware report accepted (64 MiB); a bigger one loses that lifecycle step |
+| `TASKIQ_ADMIN_MAX_VALUE_BYTES` | `65536` | args, kwargs or return value stored whole up to this size (64 KiB); a bigger one is stored as `{"truncated":true,"bytes":N,"preview":"…"}` |
 | `TASKIQ_ADMIN_LOG_LEVEL` | `info` | `debug` also logs each request |
 
 The retention TTL and the stuck-task thresholds are runtime settings, edited in the Settings page or with
