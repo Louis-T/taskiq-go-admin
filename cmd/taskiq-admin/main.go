@@ -151,20 +151,23 @@ func run() error {
 	case err := <-serveErr:
 		cancelBg()
 		bg.Wait()
-		ing.Close()
+		_ = ing.Close(context.Background())
 		return err
 	case <-ctx.Done():
 	}
 
 	log.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Docker sends SIGKILL 10s after SIGTERM by default: finish before that.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	// Stop accepting requests and let in-flight ones finish (they wait for
 	// their events to be committed), then flush whatever is still queued.
 	if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Warn("http shutdown", "err", err)
 	}
-	ing.Close()
+	if err := ing.Close(shutdownCtx); err != nil {
+		log.Warn("pending task events were not written before shutdown", "err", err)
+	}
 	cancelBg()
 	bg.Wait()
 	return nil

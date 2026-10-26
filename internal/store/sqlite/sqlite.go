@@ -359,7 +359,13 @@ func (s *Store) TypeStats(ctx context.Context, name string, from, to time.Time) 
 			var v float64
 			err := s.reader.QueryRowContext(ctx, `SELECT `+expr+` FROM taskiq_admin_tasks WHERE `+c+
 				` ORDER BY `+expr+` LIMIT 1 OFFSET ?`, append(args, int64(q*float64(n-1)))...).Scan(&v)
-			return &v, err
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil // rows purged since the count
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &v, nil
 		}
 		if p50, err = at(0.50); err != nil {
 			return nil, nil, err

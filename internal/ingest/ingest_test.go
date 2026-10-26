@@ -51,7 +51,7 @@ func TestBadEventDoesNotFailNeighbours(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	ing.Close()
+	ing.Close(context.Background())
 
 	errs.Range(func(k, v any) bool {
 		if (k == "bad") != (v != nil) {
@@ -69,7 +69,7 @@ func TestBadEventDoesNotFailNeighbours(t *testing.T) {
 func TestSubmitAfterClose(t *testing.T) {
 	ing := New(&fakeStore{applied: map[string]int{}}, 10, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	go ing.Run()
-	ing.Close()
+	ing.Close(context.Background())
 	if err := ing.Submit(context.Background(), task.Event{TaskID: "x"}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("err = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestCloseFlushesQueue(t *testing.T) {
 	}
 	go ing.Run()
 	wg.Wait()
-	ing.Close()
+	ing.Close(context.Background())
 	if len(fs.applied) != 3 {
 		t.Fatalf("applied %v", fs.applied)
 	}

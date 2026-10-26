@@ -146,6 +146,7 @@ func (s *Server) apiPutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.purger.Trigger()
+	s.hub.Publish() // stale badges may change
 	writeJSON(w, http.StatusOK, set)
 }
 

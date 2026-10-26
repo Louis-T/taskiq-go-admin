@@ -2,3 +2,6 @@
 database
 *.db
 *.db-*
+.env
+bin
+docs

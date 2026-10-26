@@ -5,7 +5,7 @@
 // drains whatever is queued and applies it in one transaction. Under load this
 // multiplies throughput; when idle a lone event is written immediately, so no
 // latency is added. Handlers still wait for the commit before answering, so a
-// 200 means the event is durable.
+// 200 means the event is committed.
 package ingest
 
 import (
@@ -48,7 +48,7 @@ func New(s store.Store, maxBatch int, log *slog.Logger) *Ingester {
 		store:    s,
 		maxBatch: maxBatch,
 		log:      log,
-		queue:    make(chan request, maxBatch*4),
+		queue:    make(chan request, maxBatch),
 		finished: make(chan struct{}),
 	}
 }
@@ -99,15 +99,21 @@ func (i *Ingester) Run() {
 	}
 }
 
-// Close stops accepting events, then waits for queued ones to be written.
-func (i *Ingester) Close() {
+// Close stops accepting events, then waits for queued ones to be written,
+// or for ctx to end (a stuck database must not block the process exit).
+func (i *Ingester) Close(ctx context.Context) error {
 	i.mu.Lock()
 	if !i.closed {
 		i.closed = true
 		close(i.queue)
 	}
 	i.mu.Unlock()
-	<-i.finished
+	select {
+	case <-i.finished:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (i *Ingester) flush(batch []request) {

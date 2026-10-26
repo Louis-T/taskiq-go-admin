@@ -17,6 +17,8 @@ import "time"
 //     admin marks running tasks abandoned at startup, but the worker may well
 //     have kept running). Between two results, the most recent finishedAt wins,
 //     so a stale duplicate cannot overwrite a newer attempt's outcome.
+//   - "executed" carries no attempt number: a result older than the start of
+//     the current retry belongs to the previous attempt and is ignored.
 //   - A new attempt (retry, detected through the "_retries" label) restarts the
 //     lifecycle, unless the worker clock shows its result already arrived
 //     (finishedAt >= the new event's timestamp).
@@ -109,7 +111,18 @@ func applyExecuted(t *Task, e Event) {
 	if t.FinishedAt != nil && t.FinishedAt.After(e.At) {
 		return // stale result of an earlier attempt
 	}
+	if t.Attempt > 0 && t.FinishedAt == nil && e.At.Before(attemptStart(t)) {
+		return // result of the previous attempt, arriving after the retry started
+	}
 	applyResult(t, e)
+}
+
+// attemptStart is when the current attempt began, as far as we know.
+func attemptStart(t *Task) time.Time {
+	if t.StartedAt != nil {
+		return *t.StartedAt
+	}
+	return t.QueuedAt
 }
 
 func applyResult(t *Task, e Event) {
@@ -133,7 +146,10 @@ func applyResult(t *Task, e Event) {
 }
 
 // resultIsNewerOrSame reports whether the stored result was produced at or
-// after ts, meaning it belongs to the attempt that ts announces.
+// after ts, meaning it belongs to the attempt that ts announces. Like
+// attemptStart, it compares timestamps from the worker that ran the task and
+// the one that re-kicked it (usually the same machine), so large clock skew
+// between workers can still misattribute a result.
 func resultIsNewerOrSame(t *Task, ts time.Time) bool {
 	return t.State.Terminal() && t.FinishedAt != nil && !t.FinishedAt.Before(ts)
 }

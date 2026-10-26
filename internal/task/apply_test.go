@@ -167,6 +167,37 @@ func TestRetryResultArrivingBeforeItsStart(t *testing.T) {
 	}
 }
 
+// A retry's reports and the failed attempt's late result arrive in any order:
+// the outcome is always the retry's.
+func TestRetryAnyOrderConverges(t *testing.T) {
+	q0, s0 := queued(t0, ""), started(t0.Add(time.Second), "")
+	exec0 := executed(t0.Add(2*time.Second), ptr("boom"))
+	q1 := queued(t0.Add(3*time.Second), `{"_retries":"1"}`)
+	s1 := started(t0.Add(4*time.Second), `{"_retries":"1"}`)
+	exec1 := executed(t0.Add(5*time.Second), nil)
+
+	for _, order := range permutations([]Event{exec0, q1, s1, exec1}) {
+		got := applyAll(append([]Event{q0, s0}, order...)...)
+		if got.State != Success || got.Attempt != 1 || got.Error != nil || !got.FinishedAt.Equal(exec1.At) {
+			t.Errorf("order %v: got state=%s attempt=%d err=%v", kinds(order), got.State, got.Attempt, got.Error)
+		}
+	}
+	// Without the retry's result yet, the late failure must not hide the retry.
+	for _, order := range permutations([]Event{exec0, q1}) {
+		got := applyAll(append([]Event{q0, s0}, order...)...)
+		if got.State != Queued || got.Attempt != 1 || got.Error != nil {
+			t.Errorf("order %v: got state=%s attempt=%d err=%v", kinds(order), got.State, got.Attempt, got.Error)
+		}
+	}
+}
+
+func kinds(events []Event) (out []string) {
+	for _, e := range events {
+		out = append(out, e.Kind.String()+"@"+e.At.Format("05"))
+	}
+	return out
+}
+
 func TestOldAttemptEventsOnlyFill(t *testing.T) {
 	cur := applyAll(started(t0.Add(4*time.Second), `{"_retries":2}`))
 	got := Apply(&cur, queued(t0, `{"_retries":1}`))

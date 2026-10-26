@@ -50,7 +50,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(func() {
 		hub.Close()
 		hs.Close()
-		ing.Close()
+		ing.Close(context.Background())
 		st.Close()
 	})
 	return &env{srv: hs, store: st, hub: hub}

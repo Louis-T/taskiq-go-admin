@@ -18,7 +18,8 @@ test:
 	go test -race ./...
 
 lint:
-	gofmt -l . && go vet ./...
+	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
+	go vet ./...
 
 docker:
 	docker build --build-arg VERSION=$(VERSION) -t ghcr.io/louis-t/taskiq-go-admin .

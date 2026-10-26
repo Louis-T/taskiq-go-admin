@@ -14,7 +14,9 @@ import (
 const (
 	minSlow    = 100 * time.Millisecond // faster queries are never cached
 	maxTTL     = 30 * time.Second       // a result is kept 5x its duration, at most this
-	maxEntries = 200
+	maxEntries = 200                    // the cache is emptied when full
+	// queryTimeout bounds a shared query, which no single request cancels.
+	queryTimeout = 2 * time.Minute
 )
 
 type entry struct {
@@ -37,42 +39,48 @@ func New(s store.Store) *Store {
 }
 
 func (c *Store) Histogram(ctx context.Context, q store.HistogramQuery) ([]store.HistogramRow, error) {
-	f := q.Filter
-	k := key("hist", f.State, f.TaskName, f.Name, f.ArgsSearch, f.From, f.To, f.Stale, q.Bucket, q.Offset)
-	return cached(ctx, c, k, func(ctx context.Context) ([]store.HistogramRow, error) { return c.Store.Histogram(ctx, q) })
+	return cached(ctx, c, histogramKey(q), func(ctx context.Context) ([]store.HistogramRow, error) {
+		return c.Store.Histogram(ctx, q)
+	})
 }
 
 func (c *Store) TaskTypes(ctx context.Context, from, to time.Time) ([]store.TypeSummary, error) {
-	return cached(ctx, c, key("types", from, to), func(ctx context.Context) ([]store.TypeSummary, error) {
+	return cached(ctx, c, key("types", round(from), round(to)), func(ctx context.Context) ([]store.TypeSummary, error) {
 		return c.Store.TaskTypes(ctx, from, to)
 	})
 }
 
 func (c *Store) TypeStats(ctx context.Context, name string, from, to time.Time) (*store.TypeStats, error) {
-	return cached(ctx, c, key("stats", name, from, to), func(ctx context.Context) (*store.TypeStats, error) {
+	return cached(ctx, c, key("stats", name, round(from), round(to)), func(ctx context.Context) (*store.TypeStats, error) {
 		return c.Store.TypeStats(ctx, name, from, to)
 	})
 }
 
-// key builds a cache key. Times are rounded to maxTTL: windows ending "now"
-// move on every request and would otherwise never match.
-func key(parts ...any) string {
-	round := func(t time.Time) int64 { return t.Truncate(maxTTL).Unix() }
-	for i, p := range parts {
-		switch v := p.(type) {
-		case time.Time:
-			parts[i] = round(v)
-		case *store.StaleFilter:
-			if v != nil {
-				parts[i] = [2]int64{round(v.RunningStartedBefore), round(v.QueuedBefore)}
-			}
+// histogramKey is built from the whole query, so a field added to the filter
+// later cannot be silently left out of the key.
+func histogramKey(q store.HistogramQuery) string {
+	hasStale, stale := q.Stale != nil, store.StaleFilter{}
+	if hasStale {
+		stale = store.StaleFilter{
+			RunningStartedBefore: round(q.Stale.RunningStartedBefore),
+			QueuedBefore:         round(q.Stale.QueuedBefore),
 		}
 	}
-	return fmt.Sprint(parts...)
+	q.Stale = nil // compared by value below, not by pointer address
+	q.From, q.To = round(q.From), round(q.To)
+	return key("hist", q, hasStale, stale)
 }
 
+// round truncates times used in keys: windows ending "now" move on every
+// request and would otherwise never match an entry.
+func round(t time.Time) time.Time { return t.Truncate(maxTTL) }
+
+// key renders the parts in Go syntax, so strings stay quoted and separated.
+func key(kind string, parts ...any) string { return fmt.Sprintf("%s%#v", kind, parts) }
+
 // cached runs fn once per key: concurrent callers wait for that same run, and
-// a slow result is reused until it expires.
+// a slow result is reused until it expires. The query runs in its own
+// goroutine, so a caller that goes away does not cancel it for the others.
 func cached[T any](ctx context.Context, c *Store, k string, fn func(context.Context) (T, error)) (T, error) {
 	c.mu.Lock()
 	e, ok := c.entries[k]
@@ -83,24 +91,40 @@ func cached[T any](ctx context.Context, c *Store, k string, fn func(context.Cont
 		default: // still running: wait for it below
 		}
 	}
-	if ok {
-		c.mu.Unlock()
-		<-e.done
-	} else {
+	if !ok {
 		if len(c.entries) >= maxEntries {
 			clear(c.entries)
 		}
 		e = &entry{done: make(chan struct{})}
 		c.entries[k] = e
-		c.mu.Unlock()
-
-		start := time.Now()
-		e.val, e.err = fn(context.WithoutCancel(ctx)) // the result may serve other requests
-		if d := time.Since(start); d >= minSlow && e.err == nil {
-			e.expires = time.Now().Add(min(5*d, maxTTL))
-		}
-		close(e.done)
+		go run(context.WithoutCancel(ctx), e, fn)
 	}
-	v, _ := e.val.(T)
-	return v, e.err
+	c.mu.Unlock()
+
+	select {
+	case <-e.done:
+		v, _ := e.val.(T)
+		return v, e.err
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+}
+
+// run fills e with fn's result. It always closes e.done, even if fn panics, so
+// waiters are never stuck; a failed or fast result is not kept.
+func run[T any](ctx context.Context, e *entry, fn func(context.Context) (T, error)) {
+	defer close(e.done)
+	defer func() {
+		if r := recover(); r != nil {
+			e.err = fmt.Errorf("cached query panicked: %v", r)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	start := time.Now()
+	e.val, e.err = fn(ctx)
+	if d := time.Since(start); d >= minSlow && e.err == nil {
+		e.expires = time.Now().Add(min(5*d, maxTTL))
+	}
 }

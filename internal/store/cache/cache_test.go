@@ -54,3 +54,61 @@ func TestFastResultIsNotCached(t *testing.T) {
 		t.Fatalf("store called %d times, want 2", n)
 	}
 }
+
+func TestHistogramKeys(t *testing.T) {
+	at := time.Date(2026, 1, 2, 10, 0, 5, 0, time.UTC)
+	q := func(f store.Filter) store.HistogramQuery {
+		f.From, f.To = at, at.Add(time.Hour)
+		return store.HistogramQuery{Filter: f, Bucket: time.Minute}
+	}
+	byState := histogramKey(q(store.Filter{State: "failure"}))
+	bySearch := histogramKey(q(store.Filter{Name: "failure"}))
+	staleOff := histogramKey(q(store.Filter{Stale: &store.StaleFilter{}}))
+	noStale := histogramKey(q(store.Filter{}))
+	if byState == bySearch || staleOff == noStale {
+		t.Fatal("different filters share a key")
+	}
+	moved := q(store.Filter{State: "failure"})
+	moved.From, moved.To = moved.From.Add(time.Second), moved.To.Add(time.Second) // same 30s window
+	if histogramKey(moved) != byState {
+		t.Fatal("a window moved by 1s must reuse the key")
+	}
+	s1, s2 := &store.StaleFilter{QueuedBefore: at}, &store.StaleFilter{QueuedBefore: at}
+	if histogramKey(q(store.Filter{Stale: s1})) != histogramKey(q(store.Filter{Stale: s2})) {
+		t.Fatal("equal stale filters must share a key whatever their address")
+	}
+}
+
+// panicStore panics on TaskTypes.
+type panicStore struct{ store.Store }
+
+func (panicStore) TaskTypes(context.Context, time.Time, time.Time) ([]store.TypeSummary, error) {
+	panic("boom")
+}
+
+func TestPanicDoesNotBlockLaterCallers(t *testing.T) {
+	c := New(panicStore{})
+	now := time.Now()
+	for range 2 {
+		done := make(chan error, 1)
+		go func() { _, err := c.TaskTypes(context.Background(), now, now); done <- err }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("expected an error from the panicking query")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("caller blocked after a panic")
+		}
+	}
+}
+
+func TestWaiterHonoursItsContext(t *testing.T) {
+	c := New(&slowStore{delay: time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := c.TaskTypes(ctx, time.Now(), time.Now()); err == nil || time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("err=%v after %v", err, time.Since(start))
+	}
+}

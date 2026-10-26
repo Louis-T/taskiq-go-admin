@@ -70,7 +70,7 @@ Open http://localhost:3000.
 | `TASKIQ_ADMIN_PURGE_INTERVAL` | `1m` | how often the TTL cleanup runs |
 | `TASKIQ_ADMIN_PURGE_BATCH_SIZE` / `_PAUSE` | `1000` / `50ms` | rows per cleanup transaction, pause between batches |
 | `TASKIQ_ADMIN_INGEST_MAX_BATCH` | `500` | most events committed in one transaction |
-| `TASKIQ_ADMIN_MAX_BODY_BYTES` | `8388608` | largest middleware report accepted |
+| `TASKIQ_ADMIN_MAX_BODY_BYTES` | `1048576` | largest middleware report accepted (1 MiB) |
 | `TASKIQ_ADMIN_LOG_LEVEL` | `info` | `debug` also logs each request |
 
 The retention TTL and the stuck-task thresholds are runtime settings, edited in the Settings page or with
@@ -99,7 +99,9 @@ from upstream issues:
 - **"Server disconnected" errors** (also #16): the idle timeout (120s) is longer than aiohttp's keep-alive, which
   caused them upstream.
 - **Middleware latency** ([#8](https://github.com/taskiq-python/taskiq-admin/issues/8)): reports are written by group
-  commit. That is roughly 9.6k events/s on a laptop, and a `200` is only sent once the event is saved.
+  commit. That is roughly 9.6k events/s on a laptop, and a `200` is only sent once the event is committed. A
+  commit survives an app crash. A power cut can lose the last commits, as with any SQLite in WAL mode with
+  `synchronous=NORMAL`.
 - **Date parameters** ([#14](https://github.com/taskiq-python/taskiq-admin/issues/14)): `startDate=2026-01-21` works,
   and the end date includes that whole day.
 
