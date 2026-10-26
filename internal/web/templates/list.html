@@ -1,0 +1,219 @@
+{{define "tasks-main"}}
+<form id="filters" class="toolbar card" action="{{.P.BasePath}}" method="get"
+      hx-get="{{.P.BasePath}}" hx-target="#results" hx-swap="outerHTML"
+      hx-trigger="submit, change, input changed delay:400ms from:.js-live">
+  <div class="toolbar-row">
+    {{if not .TypeName}}
+    <label class="field grow">
+      <span>Task name</span>
+      <input type="search" name="search" class="js-live" value="{{.P.Search}}" placeholder="Search names…" autocomplete="off">
+    </label>
+    {{end}}
+    <label class="field grow">
+      <span>Args / kwargs</span>
+      <input type="search" name="argsSearch" class="js-live" value="{{.P.ArgsSearch}}" placeholder="Search arguments…" autocomplete="off">
+    </label>
+    <label class="field">
+      <span>State</span>
+      <select name="state">
+        <option value="">Any state</option>
+        {{range .States}}<option value="{{.}}" {{if eq (stateLabel .) $.P.StateParam}}selected{{end}}>{{.}}</option>{{end}}
+        {{if .Stale}}<option value="stale" {{if .P.StaleOnly}}selected{{end}}>stale (looks stuck)</option>{{end}}
+      </select>
+    </label>
+    <label class="field">
+      <span>Queued from</span>
+      <input type="datetime-local" name="startDate" value="{{.P.StartDate}}">
+    </label>
+    <label class="field">
+      <span>Queued to</span>
+      <input type="datetime-local" name="endDate" value="{{.P.EndDate}}">
+    </label>
+    {{if .P.HasFilters}}
+    <a class="btn btn-outline" href="{{.ClearURL}}" hx-get="{{.ClearURL}}" hx-target="#main" hx-swap="innerHTML">Clear filters</a>
+    {{end}}
+    <noscript><button class="btn" type="submit">Apply</button></noscript>
+  </div>
+  <div class="toolbar-row toolbar-secondary">
+    <label class="inline">
+      <span>Chart range</span>
+      <select name="range" {{if or .P.StartDate .P.EndDate}}disabled title="The chart follows the date filter"{{end}}>
+        {{range .Chart.Presets}}<option value="{{.Key}}" {{if eq .Key $.P.Range}}selected{{end}}>Last {{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label class="inline">
+      <span>Per page</span>
+      <select name="perPage">
+        {{range .PerPageOptions}}<option value="{{.}}" {{if eq . $.P.PerPage}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    <span class="inline">
+      <input type="hidden" name="live" value="0">
+      <label class="inline" title="Refresh as soon as tasks change"><input type="checkbox" name="live" value="1" {{if .P.Live}}checked{{end}}> Live updates</label>
+    </span>
+    <span class="spacer"></span>
+    <a class="btn btn-outline" href="/api/tasks/backup" download>Download backup</a>
+  </div>
+</form>
+{{template "results" .}}
+{{end}}
+
+{{define "results"}}
+<div id="results"
+  {{if .P.Live}}hx-get="{{.SelfURL}}" hx-trigger="tasks-changed[liveRefreshAllowed()] from:body, every 30s [liveRefreshAllowed()]" hx-swap="outerHTML"{{end}}>
+  {{if .StaleCount}}
+  <div class="banner banner-warn" role="status">
+    <span><b>{{.StaleCount}}</b> task{{if ne .StaleCount 1}}s look{{else}} looks{{end}} stuck: no report received for longer than the thresholds set in <a href="/settings">Settings</a>.</span>
+    {{$u := .P.URL "state" "stale"}}<a class="btn btn-outline btn-sm" href="{{$u}}" hx-get="{{$u}}" hx-target="#main" hx-swap="innerHTML">Show them</a>
+  </div>
+  {{end}}
+  {{if .Type}}{{template "type-stats" .}}{{end}}
+  {{template "chart" .}}
+  {{template "table" .}}
+</div>
+{{end}}
+
+{{define "chart"}}
+{{with .Chart}}
+<section class="card chart-card" aria-labelledby="chart-title">
+  <div class="chart-head">
+    <div>
+      <h2 id="chart-title">Tasks over time</h2>
+      <p class="muted small">{{.Period}} · {{.Bucket}} buckets · by queue time · {{.Total}} tasks</p>
+    </div>
+    <ul class="legend">
+      {{range .Totals}}
+      {{$on := eq (stateLabel .State) $.P.StateParam}}
+      {{$u := $.P.URL "state" (stateLabel .State)}}{{if $on}}{{$u = $.P.URL "state" ""}}{{end}}
+      <li><a href="{{$u}}" hx-get="{{$u}}" hx-target="#main" hx-swap="innerHTML" aria-pressed="{{$on}}"
+             class="{{if $on}}active{{else if $.P.StateParam}}dim{{end}}" title="{{if $on}}Show all states{{else}}Show only {{.State}} tasks{{end}}">
+        <span class="swatch s-{{.State}}"></span>{{.State}} <b>{{.Count}}</b></a></li>
+      {{end}}
+    </ul>
+  </div>
+  <div class="chart">
+    <div class="chart-y" aria-hidden="true">
+      {{range .Ticks}}<span style="bottom: {{percent .Bottom}}">{{.Label}}</span>{{end}}
+    </div>
+    <div class="chart-plot">
+      {{range .Ticks}}<div class="gridline" style="bottom: {{percent .Bottom}}"></div>{{end}}
+      <div class="bars">
+        {{range .Bars}}
+        <a class="bar-slot" href="{{.Href}}" hx-get="{{.Href}}" hx-target="#main" hx-swap="innerHTML"
+           aria-label="{{.Label}}: {{.Total}} tasks{{range .Breakdown}}, {{.Count}} {{.State}}{{end}}">
+          {{if .Total}}<span class="bar" style="height: {{percent .HeightPct}}">{{range .Segs}}<span class="seg s-{{.State}}" style="flex-grow: {{.Count}}"></span>{{end}}</span>{{end}}
+          <span class="tip{{if .TipEdge}} tip-{{.TipEdge}}{{end}}" role="presentation">
+            <span class="tip-title">{{.Label}}</span>
+            {{range .Breakdown}}<span class="tip-row"><span class="swatch s-{{.State}}"></span>{{.State}}<b>{{.Count}}</b></span>{{end}}
+            <span class="tip-row tip-total">total<b>{{.Total}}</b></span>
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </div>
+    <div class="chart-x" aria-hidden="true">
+      {{range .XLabels}}<span style="left: {{percent .Left}}">{{.Label}}</span>{{end}}
+    </div>
+  </div>
+</section>
+{{end}}
+{{end}}
+
+{{define "table"}}
+<section class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th><th>ID</th><th>State</th><th>Args</th><th>Kwargs</th><th>Result</th><th>Error</th>
+          <th>Queued at</th><th>Started at</th><th>Finished at</th><th class="num">Runtime (s)</th><th>Broker</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $i, $t := .Result.Tasks}}
+        <tr class="row-link" data-href="/tasks/{{pathEscape $t.ID}}">
+          <td class="name">
+            {{if $t.Name}}
+            <a href="{{typeURL $t.Name}}" title="{{$t.Name}} — open task type statistics">{{trunc 40 (shortName $t.Name)}}</a>
+            {{else}}<span class="muted" title="The queued/started report has not arrived">unknown</span>{{end}}
+          </td>
+          <td class="nowrap mono"><a href="/tasks/{{pathEscape $t.ID}}">{{trunc 13 $t.ID}}</a>{{template "copy" $t.ID}}</td>
+          <td>{{$u := $.P.URL "state" (stateLabel $t.State)}}<a href="{{$u}}" hx-get="{{$u}}" hx-target="#main" hx-swap="innerHTML" title="Filter by state">{{template "state" $t.State}}</a>{{if $.Stale.IsStale $t}} <span class="badge badge-stale" title="No report received for longer than the stale threshold">stale</span>{{end}}{{if $t.Attempt}} <span class="muted small" title="Retry number">#{{$t.Attempt}}</span>{{end}}</td>
+          <td class="mono" title="{{trunc 500 (jsonInline $t.Args)}}">{{trunc 25 (jsonInline $t.Args)}}</td>
+          <td class="mono" title="{{trunc 500 (jsonInline $t.Kwargs)}}">{{trunc 22 (jsonInline $t.Kwargs)}}</td>
+          <td class="mono">{{if $t.State.Terminal}}{{trunc 15 (jsonInline (returnValue $t.ReturnValue))}}{{else}}<span class="muted">…</span>{{end}}</td>
+          <td class="center">
+            {{if $t.Error}}
+            <button type="button" class="btn btn-outline btn-xs" data-dialog="err-{{$i}}" aria-label="View error">view</button>
+            <dialog id="err-{{$i}}" class="dialog">
+              <div class="dialog-head">
+                <div><h3>Error details</h3><p class="muted small">{{shortName $t.Name}} · <a href="/tasks/{{pathEscape $t.ID}}">{{$t.ID}}</a></p></div>
+                <form method="dialog"><button class="btn btn-ghost" aria-label="Close">✕</button></form>
+              </div>
+              <pre class="code error-text">{{deref $t.Error}}</pre>
+            </dialog>
+            {{else}}<span class="muted">—</span>{{end}}
+          </td>
+          <td class="nowrap">{{shortTime $.Loc $t.QueuedAt}}</td>
+          <td class="nowrap">{{shortTime $.Loc $t.StartedAt}}</td>
+          <td class="nowrap">{{if $t.State.Terminal}}{{shortTime $.Loc $t.FinishedAt}}{{else if eq $t.State "running"}}{{template "spinner"}}{{end}}</td>
+          <td class="num">{{seconds $t.ExecutionTime}}</td>
+          <td class="nowrap">{{deref $t.Worker}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="12" class="empty">{{if .P.HasFilters}}No task matches these filters.{{else}}No tasks yet. Tasks appear here as soon as the taskiq middleware reports them.{{end}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <nav class="pager" aria-label="Pagination">
+    <span class="muted small">{{len .Result.Tasks}} task{{if ne (len .Result.Tasks) 1}}s{{end}} on this page</span>
+    <span class="spacer"></span>
+    {{if .PrevURL}}<a class="btn btn-outline" href="{{.PrevURL}}" hx-get="{{.PrevURL}}" hx-target="#results" hx-swap="outerHTML">← Newer</a>{{else}}<span class="btn btn-outline" aria-disabled="true">← Newer</span>{{end}}
+    {{if .NextURL}}<a class="btn btn-outline" href="{{.NextURL}}" hx-get="{{.NextURL}}" hx-target="#results" hx-swap="outerHTML">Older →</a>{{else}}<span class="btn btn-outline" aria-disabled="true">Older →</span>{{end}}
+  </nav>
+</section>
+{{end}}
+
+{{define "type-stats"}}
+{{with .Type}}
+<section class="card stats-card" aria-labelledby="stats-title">
+  <div class="stats-head">
+    <h2 id="stats-title">Statistics</h2>
+    <p class="muted small">{{$.Chart.Period}} · all runs of this task, other filters ignored</p>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-label">Runs</span>
+      <span class="stat-value">{{.Total}}</span>
+      <span class="stat-sub"><span class="swatch s-success"></span>{{count .Counts "success"}} ok <span class="swatch s-failure"></span>{{count .Counts "failure"}} failed</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Failure rate</span>
+      <span class="stat-value{{if positive .FailureRate}} stat-bad{{end}}">{{ratio .FailureRate}}</span>
+      <span class="stat-sub">of finished runs</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Runtime</span>
+      <span class="stat-value">{{secs .P50Exec}}</span>
+      <span class="stat-sub">p50 · avg {{secs .AvgExec}}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Runtime p95</span>
+      <span class="stat-value">{{secs .P95Exec}}</span>
+      <span class="stat-sub">max {{secs .MaxExec}}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Queue wait</span>
+      <span class="stat-value">{{wait .P50Wait}}</span>
+      <span class="stat-sub">p50 · queued → started</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Queue wait p95</span>
+      <span class="stat-value">{{wait .P95Wait}}</span>
+      <span class="stat-sub">high = workers saturated</span>
+    </div>
+  </div>
+</section>
+{{end}}
+{{end}}

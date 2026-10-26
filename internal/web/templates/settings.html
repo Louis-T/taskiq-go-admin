@@ -1,0 +1,39 @@
+{{define "content"}}{{template "settings-card" .}}{{end}}
+
+{{define "settings-card"}}
+<section id="settings-card" class="card narrow">
+  <form method="post" action="/settings" hx-post="/settings" hx-target="#settings-card" hx-swap="outerHTML">
+    <h1>Settings</h1>
+    <h2>Retention</h2>
+    <p class="muted">How long task information is kept before the automatic cleanup deletes it.</p>
+    <label class="field">
+      <span>Retention (TTL, minutes)</span>
+      <input type="number" name="delete_old_ttl_minutes" min="{{.Min}}" max="{{.Max}}" step="1" value="{{.TTL}}" placeholder="Cleanup disabled">
+    </label>
+    <p class="muted small">
+      Between {{.Min}} and {{.Max}} minutes (~1 year). Leave empty to disable the cleanup.
+      Tasks queued more than this long ago are deleted every {{.PurgeInterval}}, in batches of {{.PurgeBatchSize}} rows
+      so that incoming task reports are never blocked.
+    </p>
+    <h2>Stuck tasks</h2>
+    <p class="muted">Flag tasks as <span class="badge badge-stale">stale</span> when no report arrived for too long, for example because the worker died or the middleware's report was lost. Stale tasks are only flagged, never modified: a late report still updates them.</p>
+    <div class="field-row">
+      <label class="field">
+        <span>Running for more than (minutes)</span>
+        <input type="number" name="stale_running_minutes" min="{{.Min}}" max="{{.Max}}" step="1" value="{{.StaleRunning}}" placeholder="Disabled">
+      </label>
+      <label class="field">
+        <span>Queued for more than (minutes)</span>
+        <input type="number" name="stale_queued_minutes" min="{{.Min}}" max="{{.Max}}" step="1" value="{{.StaleQueued}}" placeholder="Disabled">
+      </label>
+    </div>
+    <p class="muted small">Leave empty to disable. Set them above your longest normal run and queue times.</p>
+    {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
+    {{if .Message}}<p class="alert alert-ok" role="status">{{.Message}}</p>{{end}}
+    <div class="actions">
+      <button type="button" class="btn btn-outline" hx-post="/settings/purge" hx-target="#settings-card" hx-swap="outerHTML" {{if not .TTL}}disabled{{end}}>Run cleanup now</button>
+      <button type="submit" class="btn">Save</button>
+    </div>
+  </form>
+</section>
+{{end}}

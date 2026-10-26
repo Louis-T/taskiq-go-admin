@@ -1,0 +1,61 @@
+{{define "content"}}
+<p><a class="btn btn-outline" href="/tasks" data-back>← Back to tasks</a></p>
+{{template "task-detail" .}}
+{{end}}
+
+{{define "task-detail"}}
+<div id="task-detail"
+  {{if or (not .Task) (not .Task.State.Settled)}}hx-get="/tasks/{{pathEscape .ID}}" hx-trigger="tasks-changed[liveRefreshAllowed()] from:body, every 10s [liveRefreshAllowed()]" hx-swap="outerHTML"{{end}}>
+{{with .Task}}
+<section class="card detail">
+  <div class="detail-head">
+    <div>
+      <h1 title="{{.Name}}">{{if .Name}}<a class="plain" href="{{typeURL .Name}}" title="Open task type statistics">{{shortName .Name}}</a>{{else}}<span class="muted">unknown task</span>{{end}}</h1>
+      <p class="muted small mono">{{.Name}}</p>
+    </div>
+    <div class="detail-state">{{template "state" .State}}{{if $.Stale}} <span class="badge badge-stale">stale</span>{{end}}{{if .Attempt}} <span class="muted small">retry #{{.Attempt}}</span>{{end}}</div>
+  </div>
+  {{if $.Stale}}<p class="banner banner-warn">No report received for longer than the stale threshold. The worker may have died or its report was lost; a late report will still update this task.</p>{{end}}
+  {{with timeline .}}
+  <div class="timeline" aria-label="Timeline">
+    <div class="tl-bar">
+      {{if .WaitMs}}<span class="tl-seg s-queued{{if .WaitOpen}} tl-open{{end}}" style="flex-grow: {{.WaitMs}}" title="Queue wait {{.Wait}}"></span>{{end}}
+      {{if .RunKnown}}<span class="tl-seg s-{{.State}}{{if .RunOpen}} tl-open{{end}}" style="flex-grow: {{if .RunMs}}{{.RunMs}}{{else}}1{{end}}" title="Run {{.Run}}"></span>{{end}}
+    </div>
+    <div class="tl-legend">
+      <span><span class="swatch s-queued"></span>Queue wait <b>{{.Wait}}</b>{{if .WaitOpen}} <span class="muted">(so far)</span>{{end}}</span>
+      {{if .RunKnown}}<span><span class="swatch s-{{.State}}"></span>Run <b>{{.Run}}</b>{{if .RunOpen}} <span class="muted">(so far)</span>{{end}}</span>
+      <span>Total <b>{{.Total}}</b></span>{{end}}
+    </div>
+  </div>
+  {{end}}
+  <dl class="props">
+    <dt>ID</dt><dd class="mono">{{.ID}} {{template "copy" .ID}}</dd>
+    <dt>Broker</dt><dd>{{or (deref .Worker) "—"}}</dd>
+    <dt>Queued at</dt><dd>{{fmtTime $.Loc .QueuedAt true}}</dd>
+    <dt>Started at</dt><dd>{{if .StartedAt}}{{fmtTime $.Loc .StartedAt true}}{{else if eq .State "queued"}}{{template "spinner"}} waiting for a worker{{else}}—{{end}}</dd>
+    <dt>Finished at</dt><dd>{{if .State.Terminal}}{{fmtTime $.Loc .FinishedAt true}}{{else if eq .State "running"}}{{template "spinner"}} running{{else if eq .State "abandoned"}}<span class="muted">unknown: the admin panel was restarted while the task was running</span>{{else}}—{{end}}</dd>
+    <dt>Execution time</dt><dd>{{if .ExecutionTime}}{{seconds .ExecutionTime}} s{{else}}—{{end}}{{with duration .}} <span class="muted small">(wall time {{.}})</span>{{end}}</dd>
+  </dl>
+  {{if .Error}}
+  <h2>Error</h2>
+  <pre class="code error-text">{{deref .Error}}</pre>
+  {{end}}
+  <h2>Return value</h2>
+  {{if .State.Terminal}}<pre class="code">{{jsonPretty (returnValue .ReturnValue)}}</pre>{{else}}<p class="muted">Not available yet.</p>{{end}}
+  <h2>Args</h2>
+  <pre class="code">{{jsonPretty .Args}}</pre>
+  <h2>Kwargs</h2>
+  <pre class="code">{{jsonPretty .Kwargs}}</pre>
+  <h2>Labels</h2>
+  <pre class="code">{{jsonPretty .Labels}}</pre>
+</section>
+{{else}}
+<section class="card empty-state">
+  <h1>Task not found</h1>
+  <p class="muted">No report has been received for <span class="mono">{{.ID}}</span> yet. This page keeps checking.</p>
+  <p class="muted small">It may also have been deleted by the cleanup job.</p>
+</section>
+{{end}}
+</div>
+{{end}}

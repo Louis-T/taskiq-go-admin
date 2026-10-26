@@ -1,0 +1,7 @@
+{{define "state"}}<span class="badge s-{{.}}">{{stateLabel .}}</span>{{end}}
+
+{{define "copy"}}<button type="button" class="btn btn-ghost icon-btn copy" data-copy="{{.}}" aria-label="Copy ID" title="Copy ID">
+  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>
+</button>{{end}}
+
+{{define "spinner"}}<span class="spinner" aria-label="in progress"></span>{{end}}

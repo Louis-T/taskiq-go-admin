@@ -1,0 +1,4 @@
+TASKIQ_ADMIN_API_TOKEN=supersecret
+TASKIQ_ADMIN_DB_DRIVER=sqlite
+TASKIQ_ADMIN_DB_FILE_PATH=database/database.db
+PORT=3000

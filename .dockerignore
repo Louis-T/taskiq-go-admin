@@ -1,0 +1,4 @@
+.git
+database
+*.db
+*.db-*

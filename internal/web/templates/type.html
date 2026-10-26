@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <p class="small"><a href="/types">← Task types</a></p>
+    <h1>{{shortName .TypeName}}</h1>
+    <p class="muted small mono">{{.TypeName}}</p>
+  </div>
+</div>
+<div id="main">{{template "tasks-main" .}}</div>
+{{end}}

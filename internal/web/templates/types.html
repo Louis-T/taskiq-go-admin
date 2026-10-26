@@ -1,0 +1,49 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>Task types</h1>
+    <p class="muted small">Every task name seen in the period, most run first.</p>
+  </div>
+  <label class="inline">
+    <span>Period</span>
+    <select name="range" hx-get="/types" hx-target="#types-results" hx-swap="outerHTML">
+      {{range .Presets}}<option value="{{.Key}}" {{if eq .Key $.Range}}selected{{end}}>Last {{.Label}}</option>{{end}}
+    </select>
+  </label>
+</div>
+{{template "types-results" .}}
+{{end}}
+
+{{define "types-results"}}
+<section id="types-results" class="card"
+  hx-get="{{.SelfURL}}" hx-trigger="tasks-changed[liveRefreshAllowed()] from:body, every 30s [liveRefreshAllowed()]" hx-swap="outerHTML">
+  <p class="muted small period">{{.Period}}</p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Task</th><th class="num">Runs</th><th class="num">Success</th><th class="num">Failure</th>
+          <th class="num">Failure rate</th><th class="num">Running</th><th class="num">Avg runtime</th><th class="num">Max runtime</th><th>Last queued</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Types}}
+        <tr class="row-link" data-href="{{typeURL .Name}}">
+          <td class="name"><a href="{{typeURL .Name}}" title="{{.Name}}">{{shortName .Name}}</a><div class="muted small mono">{{.Name}}</div></td>
+          <td class="num">{{.Total}}</td>
+          <td class="num">{{count .Counts "success"}}</td>
+          <td class="num">{{count .Counts "failure"}}</td>
+          <td class="num">{{ratio .FailureRate}}</td>
+          <td class="num">{{count .Counts "running"}}</td>
+          <td class="num">{{secs .AvgExec}}</td>
+          <td class="num">{{secs .MaxExec}}</td>
+          <td class="nowrap">{{shortTime $.Loc .LastQueuedAt}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="9" class="empty">No task was queued in this period.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
