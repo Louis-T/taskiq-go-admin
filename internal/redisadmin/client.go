@@ -2,8 +2,11 @@ package redisadmin
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +26,8 @@ type Client struct {
 	cfg config.Redis
 }
 
-// Connect builds the client for cfg; it does no I/O.
+// Connect builds the client for cfg; it does no I/O. cfg.DB must already be
+// resolved (config does it) and always selects the database.
 func Connect(cfg config.Redis) (*Client, error) {
 	var fromURL *redis.Options
 	if cfg.URL != "" {
@@ -37,14 +41,20 @@ func Connect(cfg config.Redis) (*Client, error) {
 	var rdb redis.UniversalClient
 	if cfg.IsSentinel() {
 		// The URL host is ignored; its credentials and TLS apply to the
-		// master only, sentinels are reached without auth.
+		// master only, sentinels are reached without auth or TLS.
+		// FailoverOptions.Username/Password are master-only, but TLSConfig
+		// would also be used for the sentinels (and carries the URL host as
+		// ServerName), so TLS goes through masterTLSDialer instead.
 		fo := &redis.FailoverOptions{
 			MasterName:    cfg.MasterName,
 			SentinelAddrs: cfg.Sentinels,
 			DB:            cfg.DB,
 		}
 		if fromURL != nil {
-			fo.Username, fo.Password, fo.TLSConfig = fromURL.Username, fromURL.Password, fromURL.TLSConfig
+			fo.Username, fo.Password = fromURL.Username, fromURL.Password
+			if fromURL.TLSConfig != nil {
+				fo.Dialer = masterTLSDialer(cfg.Sentinels, fromURL.TLSConfig)
+			}
 		}
 		rdb = redis.NewFailoverClient(fo)
 	} else {
@@ -55,6 +65,29 @@ func Connect(cfg config.Redis) (*Client, error) {
 		rdb = redis.NewClient(fromURL)
 	}
 	return &Client{rdb: rdb, cfg: cfg}, nil
+}
+
+// masterTLSDialer is the Sentinel-mode dialer when REDIS_URL asks for TLS.
+// go-redis uses one Dialer for both sentinel and master connections: the
+// configured sentinels are dialed in plain TCP, every other address (the
+// master Sentinel returned) with TLS verified against the dialed host.
+// A sentinel discovered at runtime but missing from REDIS_SENTINELS would be
+// dialed with TLS, so all sentinels should be listed.
+func masterTLSDialer(sentinels []string, base *tls.Config) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 5 * time.Minute}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if slices.Contains(sentinels, addr) {
+			return d.DialContext(ctx, network, addr)
+		}
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		cfg := base.Clone()
+		cfg.ServerName = host
+		td := &tls.Dialer{NetDialer: d, Config: cfg}
+		return td.DialContext(ctx, network, addr)
+	}
 }
 
 func (c *Client) Close() error { return c.rdb.Close() }

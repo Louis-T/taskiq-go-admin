@@ -1,6 +1,11 @@
 package redisadmin
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"net"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -39,9 +44,13 @@ func TestConnectSentinelUsesURLCredentialsOnly(t *testing.T) {
 	}
 	defer c.Close()
 	o := c.Redis().(*redis.Client).Options()
-	if o.Username != "user" || o.Password != "pw" || o.TLSConfig == nil || o.DB != 4 {
-		t.Errorf("options = user %q pw %q tls %v db %d; want user, pw, TLS, 4",
-			o.Username, o.Password, o.TLSConfig != nil, o.DB)
+	if o.Username != "user" || o.Password != "pw" || o.DB != 4 {
+		t.Errorf("options = user %q pw %q db %d; want user, pw, 4", o.Username, o.Password, o.DB)
+	}
+	// go-redis hands FailoverOptions.TLSConfig to the sentinel connections
+	// too, so TLS must come from the master dialer instead.
+	if o.TLSConfig != nil {
+		t.Error("TLSConfig is set: sentinel connections would use TLS")
 	}
 	if o.Addr == "ignored.example:1" {
 		t.Error("sentinel mode used the REDIS_URL host")
@@ -70,4 +79,62 @@ func TestParseServerInfo(t *testing.T) {
 	if _, err := parseServerInfo("uptime_in_seconds:1\r\n"); err == nil {
 		t.Error("missing redis_version: want error")
 	}
+}
+
+func TestMasterTLSDialer(t *testing.T) {
+	ctx := context.Background()
+
+	// A TLS server whose certificate is valid for 127.0.0.1, not for the
+	// REDIS_URL host that ParseURL puts in ServerName.
+	srv := httptest.NewTLSServer(nil)
+	defer srv.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	fromURL := &tls.Config{ServerName: "ignored.example", RootCAs: roots, MinVersion: tls.VersionTLS12}
+
+	plain, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	go func() {
+		for {
+			c, err := plain.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	dial := masterTLSDialer([]string{plain.Addr().String()}, fromURL)
+
+	master := srv.Listener.Addr().String()
+	conn, err := dial(ctx, "tcp", master)
+	if err != nil {
+		t.Fatalf("dial master %s: %v", master, err)
+	}
+	tc, ok := conn.(*tls.Conn)
+	if !ok {
+		t.Fatalf("master conn is %T; want *tls.Conn", conn)
+	}
+	// The handshake verified the certificate, so ServerName was the dialed
+	// host: with the URL's ServerName it fails, as the control below shows.
+	tc.Close()
+	if c, err := tls.Dial("tcp", master, fromURL); err == nil {
+		c.Close()
+		t.Fatal("control: dialing with ServerName ignored.example should fail verification")
+	}
+	if fromURL.ServerName != "ignored.example" {
+		t.Error("the URL TLS config was modified")
+	}
+
+	conn, err = dial(ctx, "tcp", plain.Addr().String())
+	if err != nil {
+		t.Fatalf("dial sentinel: %v", err)
+	}
+	if _, isTLS := conn.(*tls.Conn); isTLS {
+		t.Error("sentinel conn uses TLS; want plain TCP")
+	}
+	conn.Close()
 }
