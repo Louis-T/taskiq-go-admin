@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -400,6 +401,29 @@ func testSettings(t *testing.T, s store.Store) {
 	got, _ = s.GetSettings(ctx)
 	if got.DeleteOldTTLMinutes != nil || got.StaleRunningMinutes != nil || got.StaleQueuedMinutes != nil {
 		t.Fatalf("cleared %+v", got)
+	}
+	if got.RedisTrimIntervalMinutes != nil || got.RedisKeepAckedMinutes != nil {
+		t.Fatalf("redis settings not nil by default %+v", got)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{RedisTrimIntervalMinutes: ptr(5), RedisKeepAckedMinutes: ptr(0)}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetSettings(ctx)
+	if got.RedisTrimIntervalMinutes == nil || *got.RedisTrimIntervalMinutes != 5 || got.RedisKeepAckedMinutes == nil || *got.RedisKeepAckedMinutes != 0 {
+		t.Fatalf("redis settings %+v", got)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{RedisKeepAckedMinutes: ptr(-1)}); err == nil || !strings.Contains(err.Error(), "redis_keep_acked_minutes") {
+		t.Fatalf("keep acked -1: %v", err)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{RedisTrimIntervalMinutes: ptr(0)}); err == nil || !strings.Contains(err.Error(), "redis_trim_interval_minutes") {
+		t.Fatalf("trim interval 0: %v", err)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetSettings(ctx)
+	if got.RedisTrimIntervalMinutes != nil || got.RedisKeepAckedMinutes != nil {
+		t.Fatalf("redis settings not cleared %+v", got)
 	}
 }
 

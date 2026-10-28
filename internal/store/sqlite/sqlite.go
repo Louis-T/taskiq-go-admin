@@ -415,9 +415,11 @@ func (s *Store) AbandonRunning(ctx context.Context, cutoff time.Time, limit int)
 // text, NULL meaning disabled.
 func settingFields(set *store.Settings) map[string]**int {
 	return map[string]**int{
-		"delete_old_ttl_minutes": &set.DeleteOldTTLMinutes,
-		"stale_running_minutes":  &set.StaleRunningMinutes,
-		"stale_queued_minutes":   &set.StaleQueuedMinutes,
+		"delete_old_ttl_minutes":      &set.DeleteOldTTLMinutes,
+		"stale_running_minutes":       &set.StaleRunningMinutes,
+		"stale_queued_minutes":        &set.StaleQueuedMinutes,
+		"redis_trim_interval_minutes": &set.RedisTrimIntervalMinutes,
+		"redis_keep_acked_minutes":    &set.RedisKeepAckedMinutes,
 	}
 }
 

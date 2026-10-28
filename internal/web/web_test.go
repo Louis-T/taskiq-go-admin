@@ -275,14 +275,14 @@ func TestAPIHistogram(t *testing.T) {
 
 func TestAPISettings(t *testing.T) {
 	e := newEnv(t)
-	req, _ := http.NewRequest(http.MethodPut, e.srv.URL+"/api/settings", strings.NewReader(`{"delete_old_ttl_minutes":30}`))
+	req, _ := http.NewRequest(http.MethodPut, e.srv.URL+"/api/settings", strings.NewReader(`{"delete_old_ttl_minutes":30,"redis_trim_interval_minutes":5,"redis_keep_acked_minutes":0}`))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("%v %v", resp, err)
 	}
 	resp.Body.Close()
 	_, body := e.get(t, "/api/settings")
-	if strings.TrimSpace(body) != `{"delete_old_ttl_minutes":30,"stale_running_minutes":null,"stale_queued_minutes":null}` {
+	if strings.TrimSpace(body) != `{"delete_old_ttl_minutes":30,"stale_running_minutes":null,"stale_queued_minutes":null,"redis_trim_interval_minutes":5,"redis_keep_acked_minutes":0}` {
 		t.Fatalf("%s", body)
 	}
 	req, _ = http.NewRequest(http.MethodPut, e.srv.URL+"/api/settings", strings.NewReader(`{"delete_old_ttl_minutes":0}`))

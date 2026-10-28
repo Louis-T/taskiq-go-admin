@@ -173,6 +173,12 @@ type Settings struct {
 	StaleRunningMinutes *int `json:"stale_running_minutes"`
 	// StaleQueuedMinutes flags tasks queued for longer than this as stale.
 	StaleQueuedMinutes *int `json:"stale_queued_minutes"`
+	// RedisTrimIntervalMinutes enables the periodic trim of acknowledged
+	// Redis stream entries, run at this interval.
+	RedisTrimIntervalMinutes *int `json:"redis_trim_interval_minutes"`
+	// RedisKeepAckedMinutes is how long acknowledged stream entries are kept
+	// before being trimmed (0 trims them as soon as possible).
+	RedisKeepAckedMinutes *int `json:"redis_keep_acked_minutes"`
 }
 
 const (
@@ -185,13 +191,16 @@ func (s Settings) Validate() error {
 	for _, f := range []struct {
 		name string
 		v    *int
+		min  int
 	}{
-		{"delete_old_ttl_minutes", s.DeleteOldTTLMinutes},
-		{"stale_running_minutes", s.StaleRunningMinutes},
-		{"stale_queued_minutes", s.StaleQueuedMinutes},
+		{"delete_old_ttl_minutes", s.DeleteOldTTLMinutes, TTLMinMinutes},
+		{"stale_running_minutes", s.StaleRunningMinutes, TTLMinMinutes},
+		{"stale_queued_minutes", s.StaleQueuedMinutes, TTLMinMinutes},
+		{"redis_trim_interval_minutes", s.RedisTrimIntervalMinutes, TTLMinMinutes},
+		{"redis_keep_acked_minutes", s.RedisKeepAckedMinutes, 0},
 	} {
-		if f.v != nil && (*f.v < TTLMinMinutes || *f.v > TTLMaxMinutes) {
-			return fmt.Errorf("%s must be between %d and %d", f.name, TTLMinMinutes, TTLMaxMinutes)
+		if f.v != nil && (*f.v < f.min || *f.v > TTLMaxMinutes) {
+			return fmt.Errorf("%s must be between %d and %d", f.name, f.min, TTLMaxMinutes)
 		}
 	}
 	return nil
