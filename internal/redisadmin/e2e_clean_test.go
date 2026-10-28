@@ -299,7 +299,8 @@ func TestCleanerLargeStreamInSteps(t *testing.T) {
 
 func TestCleanerSentinelDB(t *testing.T) {
 	ctx := e2eCtx(t)
-	db4, db0 := rawDB(t, addrSentinelMaster, 4), rawDB(t, addrSentinelMaster, 0)
+	master := sentinelMaster(t)
+	db4, db0 := rawDB(t, master, 4), rawDB(t, master, 0)
 	base := time.Now().Add(-time.Hour)
 	for _, rc := range []*redis.Client{db4, db0} {
 		addEntries(t, ctx, rc, "q", base, 5)

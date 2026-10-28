@@ -216,14 +216,14 @@ func TestRealWorkerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slow := 0
+	var slowEntries []string
 	for _, p := range detail.OldestPending {
 		if strings.HasSuffix(p.TaskName, "slow") && running[p.TaskID] {
-			slow++
+			slowEntries = append(slowEntries, p.ID.String())
 		}
 	}
-	if slow != 2 {
-		t.Errorf("pending entries %+v: %d slow tasks of this run; want 2", detail.OldestPending, slow)
+	if len(slowEntries) != 2 {
+		t.Errorf("pending entries %+v: %d slow tasks of this run; want 2", detail.OldestPending, len(slowEntries))
 	}
 
 	// Clean now, then poll the box like the page does until the run's toast.
@@ -256,12 +256,11 @@ func TestRealWorkerEndToEnd(t *testing.T) {
 	if removed < 20 {
 		t.Errorf("cleanup removed %d entries; want at least 20", removed)
 	}
-	n, err := rc.XLen(ctx, workerStream).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n < 2 {
-		t.Errorf("XLEN %s = %d after cleanup; the 2 pending entries must stay", workerStream, n)
+	for _, id := range slowEntries {
+		entries, err := rc.XRange(ctx, workerStream, id, id).Result()
+		if err != nil || len(entries) != 1 {
+			t.Errorf("after cleanup: XRANGE %s = %v, %v; the pending entry must stay", id, entries, err)
+		}
 	}
 	p, err := rc.XPending(ctx, workerStream, "taskiq").Result()
 	if err != nil || p.Count != 2 {
