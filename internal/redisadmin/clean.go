@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/louis-t/taskiq-go-admin/internal/maintenance"
 	"github.com/louis-t/taskiq-go-admin/internal/store"
 )
@@ -52,6 +54,7 @@ type trimResult struct {
 	mode    string
 	streams int
 	removed int64
+	steps   int // trim commands sent
 }
 
 // trimmer does the trimming of a run; the Redis one is replaced in tests.
@@ -261,7 +264,8 @@ func (t *redisTrimmer) trimAll(ctx context.Context, now time.Time, keep time.Dur
 		if k.typ != "stream" {
 			continue
 		}
-		n, hadGroups, err := t.trimStream(ctx, k.key, acked, ageCutoff)
+		n, steps, hadGroups, err := t.trimStream(ctx, k.key, acked, ageCutoff)
+		res.steps += steps
 		res.removed += n
 		if hadGroups {
 			res.streams++
@@ -289,44 +293,48 @@ func (t *redisTrimmer) isStream(ctx context.Context, key string) bool {
 // trimStream removes, in steps of batch.Size entries, the entries of key that
 // are older than ageCutoff and acknowledged by every group.
 //
-// The groups are re-read before every step: a stream without groups (or
-// whose last group was destroyed) is left alone, and below 8.2 the safe
-// cut-off follows new groups and new deliveries.
-func (t *redisTrimmer) trimStream(ctx context.Context, key string, acked bool, ageCutoff ID) (removed int64, hadGroups bool, err error) {
+// Each step reads the groups to pick where it ends (XRANGE), then trims with
+// trimScript, which re-reads the groups in the same atomic step as the XTRIM:
+// a stream whose last group was destroyed meanwhile is left alone (XTRIM ACKED
+// would empty it), and below 8.2 the cut-off follows a group created, moved
+// back with XGROUP SETID or delivered to since the read. No window remains
+// between the group check and the trim. What it can't do: an entry already
+// removed is not brought back for a group created or moved back below it
+// later.
+func (t *redisTrimmer) trimStream(ctx context.Context, key string, acked bool, ageCutoff ID) (removed int64, steps int, hadGroups bool, err error) {
 	rdb := t.r.c.rdb
 	start := "-"
 	for {
 		states, err := t.r.groupStates(ctx, key)
 		if err != nil || len(states) == 0 {
-			return removed, hadGroups, err
+			return removed, steps, hadGroups, err
 		}
 		hadGroups = true
-		target := ageCutoff
-		if !acked {
-			// XTRIM ACKED keeps unacknowledged entries itself (8.2+); older
-			// servers must stop below every group's oldest pending and
-			// first undelivered entry.
-			target, _ = SafeCutoff(ageCutoff, states)
+		// Below 8.2, stop below every group's oldest pending and first
+		// undelivered entry. XTRIM ACKED skips the pending ones itself
+		// (8.2+), but never removes an undelivered entry either: stopping
+		// at the first one keeps a large backlog from being walked in
+		// steps on every run.
+		target, _ := SafeCutoff(ageCutoff, states)
+		if acked {
+			target = deliveredCutoff(ageCutoff, states)
 		}
 		if target == (ID{}) {
-			return removed, hadGroups, nil // nothing is below 0-0
+			return removed, steps, hadGroups, nil // nothing is below 0-0
 		}
 		entries, err := rdb.XRangeN(ctx, key, start, "("+target.String(), int64(t.batch.Size)).Result()
 		if err != nil || len(entries) == 0 {
-			return removed, hadGroups, err
+			return removed, steps, hadGroups, err
 		}
 		last, err := ParseID(entries[len(entries)-1].ID)
 		if err != nil {
-			return removed, hadGroups, err
+			return removed, steps, hadGroups, err
 		}
-		args := []any{"XTRIM", key, "MINID", last.Next().String()}
-		if acked {
-			args = append(args, "ACKED")
-		}
-		n, err := rdb.Do(ctx, args...).Int64()
+		n, err := runTrimScript(ctx, rdb, key, last.Next(), acked)
 		removed += n
+		steps++
 		if err != nil || len(entries) < t.batch.Size {
-			return removed, hadGroups, err
+			return removed, steps, hadGroups, err
 		}
 		start = "(" + last.String()
 		if t.batch.Pause > 0 {
@@ -334,9 +342,65 @@ func (t *redisTrimmer) trimStream(ctx context.Context, key string, acked bool, a
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return removed, hadGroups, ctx.Err()
+				return removed, steps, hadGroups, ctx.Err()
 			case <-timer.C:
 			}
 		}
 	}
+}
+
+// trimScript removes the entries of KEYS[1] below the MINID ARGV[1], unless
+// the stream has no group. With ARGV[2] = "ACKED" (8.2+) Redis keeps the
+// unacknowledged entries; otherwise the MINID is first lowered to every
+// group's oldest pending entry and last delivered ID + 1, read here. IDs are
+// compared as decimal strings, exact over the whole uint64 range.
+var trimScript = redis.NewScript(`
+local key, minid = KEYS[1], ARGV[1]
+local groups = redis.call('XINFO', 'GROUPS', key)
+if #groups == 0 then return 0 end
+if ARGV[2] == 'ACKED' then
+  return redis.call('XTRIM', key, 'MINID', minid, 'ACKED')
+end
+local function split(id) return string.match(id, '^(%d+)-(%d+)$') end
+local function numless(a, b)
+  if #a ~= #b then return #a < #b end
+  return a < b
+end
+local function idless(a, b)
+  local ams, aseq = split(a)
+  local bms, bseq = split(b)
+  if ams ~= bms then return numless(ams, bms) end
+  return numless(aseq, bseq)
+end
+local function incr(s)
+  local i = #s
+  while i > 0 and string.sub(s, i, i) == '9' do i = i - 1 end
+  if i == 0 then return '1' .. string.rep('0', #s) end
+  return string.sub(s, 1, i - 1) .. string.char(string.byte(s, i) + 1) .. string.rep('0', #s - i)
+end
+local function nextid(id)
+  local ms, seq = split(id)
+  if seq == '18446744073709551615' then return incr(ms) .. '-0' end
+  return ms .. '-' .. incr(seq)
+end
+for _, g in ipairs(groups) do
+  local name, last
+  for i = 1, #g, 2 do
+    if g[i] == 'name' then name = g[i + 1] elseif g[i] == 'last-delivered-id' then last = g[i + 1] end
+  end
+  local nxt = nextid(last)
+  if idless(nxt, minid) then minid = nxt end
+  local p = redis.call('XPENDING', key, name)
+  if p[1] > 0 and idless(p[2], minid) then minid = p[2] end
+end
+return redis.call('XTRIM', key, 'MINID', minid)
+`)
+
+// runTrimScript runs trimScript on key and returns how many entries it removed.
+func runTrimScript(ctx context.Context, rdb redis.Scripter, key string, minID ID, acked bool) (int64, error) {
+	mode := ""
+	if acked {
+		mode = "ACKED"
+	}
+	return trimScript.Run(ctx, rdb, []string{key}, minID.String(), mode).Int64()
 }

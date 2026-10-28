@@ -236,7 +236,7 @@ func isPerKeyError(err error) bool {
 }
 
 // groupStates reads, for every group of the stream, the last delivered ID and
-// the oldest pending ID.
+// the oldest pending ID. A group destroyed between the two reads is left out.
 func (r *Reader) groupStates(ctx context.Context, key string) ([]GroupState, error) {
 	groups, err := r.c.rdb.XInfoGroups(ctx, key).Result()
 	if err != nil {
@@ -257,24 +257,28 @@ func (r *Reader) groupStatesOf(ctx context.Context, key string, groups []redis.X
 	if _, err := pipe.Exec(ctx); err != nil && !isPerKeyError(err) {
 		return nil, err
 	}
-	states := make([]GroupState, len(groups))
+	var states []GroupState
 	for i, g := range groups {
 		last, err := ParseID(g.LastDeliveredID)
 		if err != nil {
 			return nil, err
 		}
-		states[i] = GroupState{Name: g.Name, LastDelivered: last}
 		p, err := cmds[i].Result()
+		if err != nil && strings.HasPrefix(err.Error(), "NOGROUP") {
+			continue // destroyed since XINFO GROUPS: it constrains nothing now
+		}
 		if err != nil {
 			return nil, err
 		}
+		st := GroupState{Name: g.Name, LastDelivered: last}
 		if p.Count > 0 {
 			id, err := ParseID(p.Lower)
 			if err != nil {
 				return nil, err
 			}
-			states[i].OldestPending = &id
+			st.OldestPending = &id
 		}
+		states = append(states, st)
 	}
 	return states, nil
 }

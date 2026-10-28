@@ -24,3 +24,16 @@ func SafeCutoff(ageCutoff ID, groups []GroupState) (cutoff ID, ok bool) {
 	}
 	return cutoff, true
 }
+
+// deliveredCutoff returns min(ageCutoff, every group's last delivered ID + 1):
+// nothing at or above it has been delivered to every group, so XTRIM ACKED
+// can't remove it either.
+func deliveredCutoff(ageCutoff ID, groups []GroupState) ID {
+	cutoff := ageCutoff
+	for _, g := range groups {
+		if next := g.LastDelivered.Next(); next.Less(cutoff) {
+			cutoff = next
+		}
+	}
+	return cutoff
+}

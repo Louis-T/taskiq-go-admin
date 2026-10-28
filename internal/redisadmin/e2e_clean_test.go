@@ -236,6 +236,41 @@ func TestCleanerTwoGroups(t *testing.T) {
 	}
 }
 
+// measurePings PINGs addr from its own connection until stop is called, and
+// returns how many PINGs were sent and the slowest round trip.
+func measurePings(t *testing.T, ctx context.Context, addr string) (stop func() (int, time.Duration)) {
+	t.Helper()
+	ping := redis.NewClient(&redis.Options{Addr: addr, PoolSize: 1})
+	var maxPing time.Duration
+	var pings int
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			start := time.Now()
+			if err := ping.Ping(ctx).Err(); err != nil {
+				t.Errorf("PING: %v", err)
+				return
+			}
+			maxPing = max(maxPing, time.Since(start))
+			pings++
+		}
+	}()
+	return func() (int, time.Duration) {
+		close(done)
+		wg.Wait()
+		ping.Close()
+		return pings, maxPing
+	}
+}
+
 func TestCleanerLargeStreamInSteps(t *testing.T) {
 	const n = 200_000
 	for _, s := range cleanServers() {
@@ -247,36 +282,9 @@ func TestCleanerLargeStreamInSteps(t *testing.T) {
 			readAndAck(t, ctx, rc, "q", "g", n)
 
 			c := newE2ECleaner(t, config.Redis{URL: "redis://" + s.addr, DB: cleanDB}, 0, 10_000)
-			// PING from its own connection for the whole run and keep the
-			// slowest round trip.
-			ping := redis.NewClient(&redis.Options{Addr: s.addr, PoolSize: 1})
-			defer ping.Close()
-			var maxPing time.Duration
-			var pings int
-			stop := make(chan struct{})
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for {
-					select {
-					case <-stop:
-						return
-					default:
-					}
-					start := time.Now()
-					if err := ping.Ping(ctx).Err(); err != nil {
-						t.Errorf("PING: %v", err)
-						return
-					}
-					maxPing = max(maxPing, time.Since(start))
-					pings++
-				}
-			}()
-
+			stop := measurePings(t, ctx, s.addr)
 			sum, err := c.RunOnce(ctx)
-			close(stop)
-			wg.Wait()
+			pings, maxPing := stop()
 			checkSummary(t, sum, err, s.mode(), 1, n)
 			if l, err := rc.XLen(ctx, "q").Result(); err != nil || l != 0 {
 				t.Errorf("XLEN = %d, %v; want 0", l, err)
@@ -381,5 +389,126 @@ func TestCleanerSkipsVanishedKeys(t *testing.T) {
 				t.Errorf("b = %q; the string key was touched", v)
 			}
 		})
+	}
+}
+
+// With the workers down, a stream holds a large undelivered backlog: on 8.2
+// too the run must stop at the last delivered entry instead of walking the
+// backlog in steps every run.
+func TestCleanerUndeliveredBacklog(t *testing.T) {
+	const n, delivered = 200_000, 10
+	for _, s := range cleanServers() {
+		t.Run(s.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			rc := rawDB(t, s.addr, cleanDB)
+			ids := addEntries(t, ctx, rc, "q", time.Now().Add(-time.Hour), n)
+			readAndAck(t, ctx, rc, "q", "g", delivered)
+
+			c := newE2ECleaner(t, config.Redis{URL: "redis://" + s.addr, DB: cleanDB}, 0, 10_000)
+			stop := measurePings(t, ctx, s.addr)
+			res, err := c.trim.trimAll(ctx, time.Now(), 0)
+			pings, maxPing := stop()
+			if err != nil || res.removed != delivered || res.streams != 1 {
+				t.Fatalf("trimAll = %+v, %v; want %d removed from 1 stream", res, err, delivered)
+			}
+			if res.steps != 1 {
+				t.Errorf("%d trim steps; want 1 (stop at the last delivered entry)", res.steps)
+			}
+			// The remaining entries are a subset of ids: with this length,
+			// first and last, they are exactly the undelivered ones.
+			l, err := rc.XLen(ctx, "q").Result()
+			first, err1 := rc.XRangeN(ctx, "q", "-", "+", 1).Result()
+			last, err2 := rc.XRevRangeN(ctx, "q", "+", "-", 1).Result()
+			if err != nil || err1 != nil || err2 != nil || l != n-delivered || first[0].ID != ids[delivered] || last[0].ID != ids[n-1] {
+				t.Errorf("after the run: XLEN %d, first %v, last %v (%v %v %v); want the %d undelivered entries", l, first, last, err, err1, err2, n-delivered)
+			}
+			if pings == 0 || maxPing > 200*time.Millisecond {
+				t.Errorf("%d PINGs during the run, slowest %v; want some, all under 200ms", pings, maxPing)
+			}
+		})
+	}
+}
+
+// The trim script re-reads the groups in the same atomic step as XTRIM.
+func TestTrimScript(t *testing.T) {
+	const maxSeq = "18446744073709551615"
+	far := ID{Ms: 1 << 50}
+	add := func(t *testing.T, ctx context.Context, rc *redis.Client, ids ...string) {
+		t.Helper()
+		for _, id := range ids {
+			if err := rc.XAdd(ctx, &redis.XAddArgs{Stream: "q", ID: id, Values: []any{"data", id}}).Err(); err != nil {
+				t.Fatalf("XADD %s: %v", id, err)
+			}
+		}
+	}
+	for _, s := range cleanServers() {
+		t.Run(s.name, func(t *testing.T) {
+			ctx := e2eCtx(t)
+			rc := rawDB(t, s.addr, cleanDB)
+			check := func(what string, acked bool, wantRemoved int64, want ...string) {
+				t.Helper()
+				n, err := runTrimScript(ctx, rc, "q", far, acked)
+				if err != nil || n != wantRemoved {
+					t.Errorf("%s: removed %d, %v; want %d", what, n, err, wantRemoved)
+				}
+				if got := streamIDs(t, ctx, rc, "q"); !slices.Equal(got, want) {
+					t.Errorf("%s: remaining %v; want %v", what, got, want)
+				}
+			}
+
+			// No group: nothing is removed, on either path.
+			add(t, ctx, rc, "1-1", "1-2")
+			check("no group, cut-off", false, 0, "1-1", "1-2")
+			if s.acked {
+				check("no group, ACKED", true, 0, "1-1", "1-2")
+			}
+
+			// Cut-off path: stops at the oldest pending entry.
+			add(t, ctx, rc, "1-3", "1-4")
+			if err := rc.XGroupCreate(ctx, "q", "g", "0").Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := rc.XReadGroup(ctx, &redis.XReadGroupArgs{Group: "g", Consumer: "c", Streams: []string{"q", ">"}, Count: 3}).Err(); err != nil {
+				t.Fatal(err)
+			}
+			rc.XAck(ctx, "q", "g", "1-1", "1-3")
+			check("pending 1-2", false, 1, "1-2", "1-3", "1-4")
+
+			// Last delivered + 1, with a carry in the sequence and at its maximum.
+			rc.XAck(ctx, "q", "g", "1-2")
+			check("delivered up to 1-3", false, 2, "1-4")
+			rc.Del(ctx, "q")
+			add(t, ctx, rc, "9-98", "9-99", "9-100")
+			rc.XGroupCreate(ctx, "q", "g", "9-99")
+			check("delivered up to 9-99", false, 2, "9-100")
+			rc.Del(ctx, "q")
+			add(t, ctx, rc, "5-"+maxSeq, "6-0")
+			rc.XGroupCreate(ctx, "q", "g", "5-"+maxSeq)
+			check("delivered up to 5-max", false, 1, "6-0")
+		})
+	}
+}
+
+// A group destroyed between XINFO GROUPS and XPENDING no longer constrains
+// anything: it is skipped instead of failing the run.
+func TestGroupStatesSkipsVanishedGroup(t *testing.T) {
+	ctx := e2eCtx(t)
+	rc := rawDB(t, addrRedis70, cleanDB)
+	addEntries(t, ctx, rc, "q", time.Now().Add(-time.Hour), 3)
+	readAndAck(t, ctx, rc, "q", "g", 2)
+	groups, err := rc.XInfoGroups(ctx, "q").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := redis.XInfoGroup{Name: "gone", LastDeliveredID: "0-0"}
+	r := NewReader(connect(t, config.Redis{URL: "redis://" + addrRedis70, DB: cleanDB}), nil)
+
+	states, err := r.groupStatesOf(ctx, "q", append(groups, gone))
+	if err != nil || len(states) != 1 || states[0].Name != "g" {
+		t.Errorf("groupStatesOf = %+v, %v; want only g", states, err)
+	}
+	if states, err := r.groupStatesOf(ctx, "q", []redis.XInfoGroup{gone}); err != nil || len(states) != 0 {
+		t.Errorf("all groups gone: %+v, %v; want none", states, err)
 	}
 }

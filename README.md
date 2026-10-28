@@ -92,7 +92,9 @@ The retention TTL and the stuck-task thresholds are runtime settings, edited in 
   **Clean now**. **Every stream with a consumer group in that database is trimmed**, taskiq's or not. Only entries
   acknowledged by every group are removed: pending or undelivered ones always stay, and a stream without a group is
   never touched. It uses `XTRIM … ACKED` on Redis 8.2+, and a safe cut-off below the oldest unacknowledged entry on
-  older versions. The Redis section needs Redis 7.0 or later.
+  older versions. Each step re-reads the consumer groups and trims in one atomic Lua script, so a group created,
+  destroyed or moved back meanwhile is taken into account; only an entry already removed cannot come back for a
+  group created or moved back below it later. The Redis section needs Redis 7.0 or later.
 - **Volume**: the image runs as UID 65532. Named volumes just work. A bind-mounted directory must be writable by that
   UID.
 - **Restarts**: tasks that were running when the panel restarted become `abandoned`. If their result arrives later,

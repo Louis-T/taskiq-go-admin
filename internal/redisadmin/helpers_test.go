@@ -90,3 +90,23 @@ func TestParseTaskMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestDeliveredCutoff(t *testing.T) {
+	pend := &ID{150, 2}
+	cases := []struct {
+		name   string
+		age    ID
+		groups []GroupState
+		want   ID
+	}{
+		{"age wins", ID{100, 0}, []GroupState{{"g", ID{200, 0}, nil}}, ID{100, 0}},
+		{"delivered wins", ID{300, 0}, []GroupState{{"g", ID{200, 5}, nil}}, ID{200, 6}},
+		{"pending ignored", ID{300, 0}, []GroupState{{"g", ID{250, 0}, pend}}, ID{250, 1}},
+		{"slowest group", ID{300, 0}, []GroupState{{"a", ID{200, 0}, nil}, {"b", ID{120, 0}, nil}}, ID{120, 1}},
+	}
+	for _, c := range cases {
+		if got := deliveredCutoff(c.age, c.groups); got != c.want {
+			t.Errorf("%s: got %v; want %v", c.name, got, c.want)
+		}
+	}
+}
