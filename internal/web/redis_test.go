@@ -13,7 +13,15 @@ import (
 
 	"github.com/louis-t/taskiq-go-admin/internal/redisadmin"
 	"github.com/louis-t/taskiq-go-admin/internal/store"
+	"github.com/louis-t/taskiq-go-admin/internal/task"
 )
+
+func mustApply(t *testing.T, st store.Store, events ...task.Event) {
+	t.Helper()
+	if err := st.ApplyEvents(context.Background(), events); err != nil {
+		t.Fatalf("ApplyEvents: %v", err)
+	}
+}
 
 type fakeReader struct {
 	mu        sync.Mutex
@@ -204,6 +212,7 @@ func TestRedisStreamPage(t *testing.T) {
 		OldestPending: []redisadmin.PendingMessage{{ID: redisadmin.ID{Ms: 1793201530000}, TaskID: "t-1", TaskName: "app:send_report", Consumer: "3f2a", Idle: 22 * time.Minute, Deliveries: 3}},
 	}}
 	e := newRedisEnv(t, rd, &fakeCleaner{})
+	mustApply(t, e.store, task.Event{Kind: task.KindQueued, TaskID: "t-1", At: first, Name: "app:send_report"})
 	code, body := e.get(t, "/redis/streams/taskiq:high")
 	if code != 200 {
 		t.Fatalf("status %d", code)
@@ -212,6 +221,50 @@ func TestRedisStreamPage(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
+	}
+	if strings.Contains(body, "never trimmed") || strings.Contains(body, "at least") {
+		t.Errorf("a stream with a group on Redis < 8.2 shows an exact count:\n%s", body)
+	}
+}
+
+// Only the task ids the admin has stored link to a task page.
+func TestRedisStreamLinksKnownTasksOnly(t *testing.T) {
+	rd := &fakeReader{stream: redisadmin.StreamDetail{
+		Key: "q", Length: 2, Groups: []redisadmin.Group{{Name: "g", Pending: 2}},
+		OldestPending: []redisadmin.PendingMessage{
+			{ID: redisadmin.ID{Ms: 1, Seq: 1}, TaskID: "known", TaskName: "app:known_task"},
+			{ID: redisadmin.ID{Ms: 1, Seq: 2}, TaskID: "unknown", TaskName: "app:other_task"},
+		},
+	}}
+	e := newRedisEnv(t, rd, &fakeCleaner{})
+	mustApply(t, e.store, task.Event{Kind: task.KindQueued, TaskID: "known", At: time.Now(), Name: "app:known_task"})
+	_, body := e.get(t, "/redis/streams/q")
+	if !strings.Contains(body, `href="/tasks/known"`) {
+		t.Errorf("no link to the known task:\n%s", body)
+	}
+	if strings.Contains(body, `href="/tasks/unknown"`) || !strings.Contains(body, "other_task") {
+		t.Errorf("the unknown task must show as plain text:\n%s", body)
+	}
+}
+
+func TestRedisStreamWithoutGroupNeverTrimmed(t *testing.T) {
+	rd := &fakeReader{stream: redisadmin.StreamDetail{Key: "q", Length: 5}}
+	e := newRedisEnv(t, rd, &fakeCleaner{})
+	_, body := e.get(t, "/redis/streams/q")
+	if !regexp.MustCompile(`Trimmable now</span><span class="stat-value">never trimmed`).MatchString(body) {
+		t.Errorf("no \"never trimmed\" for a stream without a group:\n%s", body)
+	}
+}
+
+// On Redis 8.2+ XTRIM ACKED also removes acknowledged entries above a pending
+// one, so the count is a lower bound.
+func TestRedisStreamTrimmableAtLeast(t *testing.T) {
+	rd := &fakeReader{stream: redisadmin.StreamDetail{Key: "q", Length: 5, Trimmable: 3, TrimmableAtLeast: true,
+		Groups: []redisadmin.Group{{Name: "g"}}}}
+	e := newRedisEnv(t, rd, &fakeCleaner{})
+	_, body := e.get(t, "/redis/streams/q")
+	if !strings.Contains(body, `<span class="stat-value">at least 3</span>`) {
+		t.Errorf("no \"at least 3\":\n%s", body)
 	}
 }
 

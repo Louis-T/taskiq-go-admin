@@ -68,8 +68,11 @@ type StreamDetail struct {
 	LastEntry       *time.Time
 	Trimmable       int64 // entries below the safe cutoff, counted up to TrimmableCap
 	TrimmableCapped bool
-	Groups          []Group
-	OldestPending   []PendingMessage // at most 20, oldest first
+	// TrimmableAtLeast: on Redis 8.2+ XTRIM ACKED also removes acknowledged
+	// entries above a pending one, so Trimmable is a lower bound.
+	TrimmableAtLeast bool
+	Groups           []Group
+	OldestPending    []PendingMessage // at most 20, oldest first
 }
 
 type scannedKey struct{ key, typ string }
@@ -364,6 +367,7 @@ func (r *Reader) Stream(ctx context.Context, key string) (StreamDetail, error) {
 		if d.Trimmable > TrimmableCap {
 			d.Trimmable, d.TrimmableCapped = TrimmableCap, true
 		}
+		d.TrimmableAtLeast = info.Version.AtLeast(8, 2, 0)
 	}
 	return d, nil
 }

@@ -130,6 +130,40 @@ func (s *Store) GetTask(ctx context.Context, id string) (*task.Task, error) {
 	return getTask(ctx, s.reader, id)
 }
 
+// knownIDsChunk keeps each query far below SQLite's bound-parameter limit.
+const knownIDsChunk = 500
+
+func (s *Store) KnownTaskIDs(ctx context.Context, ids []string) (map[string]bool, error) {
+	known := map[string]bool{}
+	for len(ids) > 0 {
+		chunk := ids[:min(len(ids), knownIDsChunk)]
+		ids = ids[len(chunk):]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		rows, err := s.reader.QueryContext(ctx, `SELECT id FROM taskiq_admin_tasks WHERE id IN (`+marks+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			known[id] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return known, nil
+}
+
 type scanner interface{ Scan(dest ...any) error }
 
 func scanTask(sc scanner) (*task.Task, error) {

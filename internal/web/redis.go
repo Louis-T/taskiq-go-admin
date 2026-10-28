@@ -106,7 +106,8 @@ type streamPage struct {
 	Key    string
 	Detail redisadmin.StreamDetail
 	Error  string
-	Stale  time.Duration // 0: no threshold
+	Stale  time.Duration   // 0: no threshold
+	Known  map[string]bool // task ids of OldestPending the admin has stored
 }
 
 type cleanBox struct {
@@ -189,11 +190,34 @@ func (s *Server) uiRedisStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		data.Error = readError(err, redisadmin.Version{})
 	}
+	data.Known = s.knownTasks(r.Context(), detail.OldestPending)
 	if htmxTarget(r) == "redis-stream-body" {
 		s.render(w, r, "redis-stream", "redis-stream-body", data)
 		return
 	}
 	s.render(w, r, "redis-stream", "layout", data)
+}
+
+// knownTasks returns which task ids of msgs the store has; on a store error
+// none, so the names show without links.
+func (s *Server) knownTasks(ctx context.Context, msgs []redisadmin.PendingMessage) map[string]bool {
+	var ids []string
+	for _, m := range msgs {
+		if m.TaskID != "" {
+			ids = append(ids, m.TaskID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	known, err := s.store.KnownTaskIDs(ctx, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.log.Warn("look up the tasks of pending entries", "err", err)
+		}
+		return nil
+	}
+	return known
 }
 
 // uiRedisCleanup serves the cleanup box alone, polled by the page. When a

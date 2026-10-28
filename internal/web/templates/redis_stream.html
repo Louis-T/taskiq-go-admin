@@ -18,9 +18,10 @@
       <div class="stat"><span class="stat-label">Length</span><span class="stat-value">{{.Length}}</span></div>
       <div class="stat"><span class="stat-label">First entry</span><span class="stat-value">{{agoSince .FirstEntry}}</span></div>
       <div class="stat"><span class="stat-label">Last entry</span><span class="stat-value">{{agoSince .LastEntry}}</span></div>
-      <div class="stat"><span class="stat-label">Trimmable now</span><span class="stat-value">{{if .TrimmableCapped}}{{.Trimmable}}+{{else}}{{.Trimmable}}{{end}}</span></div>
+      <div class="stat"><span class="stat-label">Trimmable now</span><span class="stat-value">{{if not .Groups}}never trimmed{{else if .TrimmableAtLeast}}at least {{.Trimmable}}{{else if .TrimmableCapped}}{{.Trimmable}}+{{else}}{{.Trimmable}}{{end}}</span></div>
     </div>
   </section>
+  {{if not .Groups}}<p class="muted small">No consumer group: nothing can be proven acknowledged, so the cleanup leaves this stream alone.</p>{{end}}
 
   {{range .Groups}}
   <section class="card redis-card">
@@ -54,7 +55,7 @@
           {{range .OldestPending}}
           <tr>
             <td class="mono">{{.ID}}</td>
-            <td>{{if .TaskID}}<a href="/tasks/{{pathEscape .TaskID}}">{{shortName .TaskName}}</a>{{else}}<span class="muted">not a taskiq message</span>{{end}}</td>
+            <td>{{if not .TaskID}}<span class="muted">not a taskiq message</span>{{else if index $.Known .TaskID}}<a href="/tasks/{{pathEscape .TaskID}}">{{shortName .TaskName}}</a>{{else}}{{shortName .TaskName}}{{end}}</td>
             <td class="mono">{{.Consumer}}</td>
             <td class="num{{if over .Idle $.Stale}} warn{{end}}">{{age .Idle}}</td>
             <td class="num">{{.Deliveries}}</td>
@@ -65,7 +66,7 @@
         </tbody>
       </table>
     </div>
-    <p class="muted small">The task name links to its page in Tasks.</p>
+    <p class="muted small">The task name links to its page in Tasks when the admin has that task.</p>
   </section>
   {{end}}
   {{end}}

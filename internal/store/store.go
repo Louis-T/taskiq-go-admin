@@ -33,6 +33,9 @@ type Store interface {
 	ApplyEvents(ctx context.Context, events []task.Event) error
 
 	GetTask(ctx context.Context, id string) (*task.Task, error)
+	// KnownTaskIDs returns which of ids are stored tasks (the map holds only
+	// those, set to true).
+	KnownTaskIDs(ctx context.Context, ids []string) (map[string]bool, error)
 	ListTasks(ctx context.Context, q ListQuery) (*ListResult, error)
 	// Histogram counts tasks per (queuedAt bucket, state) in [From, To).
 	Histogram(ctx context.Context, q HistogramQuery) ([]HistogramRow, error)

@@ -33,6 +33,7 @@ func Run(t *testing.T, newStore Factory) {
 		"AbandonRunning":      testAbandonRunning,
 		"Settings":            testSettings,
 		"NotFound":            testNotFound,
+		"KnownTaskIDs":        testKnownTaskIDs,
 		"BackupOrUnsupported": testBackup,
 		"StaleAndCount":       testStaleAndCount,
 		"TaskTypesAndStats":   testTaskTypesAndStats,
@@ -430,6 +431,21 @@ func testSettings(t *testing.T, s store.Store) {
 func testNotFound(t *testing.T, s store.Store) {
 	if _, err := s.GetTask(context.Background(), "missing"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func testKnownTaskIDs(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mustApply(t, s, queuedEvent("a", "x", base), queuedEvent("b", "x", base))
+	got, err := s.KnownTaskIDs(ctx, []string{"a", "missing", "b", "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got["a"] || !got["b"] {
+		t.Fatalf("KnownTaskIDs = %v; want a and b", got)
+	}
+	if got, err := s.KnownTaskIDs(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("KnownTaskIDs(nil) = %v, %v; want empty", got, err)
 	}
 }
 
