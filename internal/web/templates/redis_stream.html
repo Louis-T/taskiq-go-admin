@@ -23,7 +23,7 @@
   </section>
 
   {{range .Groups}}
-  <section class="card">
+  <section class="card redis-card">
     <h2>Consumer group: {{.Name}}</h2>
     <p class="muted">last delivered <span class="mono">{{.LastDelivered}}</span> · lag {{if .Lag}}{{derefInt .Lag}}{{else}}unknown{{end}} · pending {{.Pending}}</p>
     <div class="table-wrap">
@@ -45,7 +45,7 @@
   </section>
   {{end}}
 
-  <section class="card">
+  <section class="card redis-card">
     <h2>Oldest pending messages</h2>
     <div class="table-wrap">
       <table class="table">

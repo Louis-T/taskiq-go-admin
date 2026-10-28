@@ -324,4 +324,4 @@ a.plain { color: inherit; }
 
 /* redis section */
 .warn { color: var(--s-running); font-weight: 600; }
-.card h2 { margin-bottom: 8px; }
+.redis-card h2 { margin: 0 0 8px; }

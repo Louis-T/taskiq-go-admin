@@ -9,6 +9,8 @@
 {{template "redis-cleanup" .Clean}}
 {{end}}
 
+{{define "redis-refresh"}}{{template "redis-body" .}}{{if .Clean.OOB}}{{template "redis-cleanup" .Clean}}{{end}}{{end}}
+
 {{define "redis-body"}}
 <div id="redis-body" hx-get="/redis" hx-trigger="every 5s [document.visibilityState==='visible']" hx-swap="outerHTML">
   {{if .Error}}
@@ -37,7 +39,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card redis-card">
     <h2>Queues</h2>
     <div class="table-wrap">
       <table class="table">
@@ -71,14 +73,14 @@
 {{end}}
 
 {{define "redis-cleanup"}}
-<section id="redis-cleanup" class="card"
-  hx-get="/redis/cleanup?seen={{.Seq}}{{if .Running}}&running=1{{end}}"
+<section id="redis-cleanup" class="card redis-card"{{if .OOB}} hx-swap-oob="true"{{end}}
+  hx-get="/redis/cleanup?seen={{.Seq}}{{if .Running}}&running=1{{end}}{{if .Off}}&off=1{{end}}"
   hx-trigger="{{if .Running}}every 1s{{else}}every 5s [document.visibilityState==='visible']{{end}}" hx-swap="outerHTML">
   <div class="page-head">
     <h2>Stream cleanup</h2>
     <form method="post" action="/redis/cleanup" hx-post="/redis/cleanup" hx-target="#redis-cleanup" hx-swap="outerHTML">
       <button type="submit" class="btn btn-outline"
-        {{if .Running}}disabled{{else if not .KeepAcked}}disabled title="Set a keep-acked age in Settings first"{{end}}>{{if .Running}}Running…{{else}}Clean now{{end}}</button>
+        {{if .Running}}disabled{{else if .Off}}disabled title="Redis is unavailable"{{else if not .KeepAcked}}disabled title="Set a keep-acked age in Settings first"{{end}}>{{if .Running}}Running…{{else}}Clean now{{end}}</button>
     </form>
   </div>
   <p>

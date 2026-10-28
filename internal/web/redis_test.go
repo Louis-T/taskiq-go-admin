@@ -40,12 +40,16 @@ type fakeCleaner struct {
 	status    redisadmin.CleanStatus
 	triggers  int
 	triggered bool // value returned by Trigger
+	bumpSeq   bool // Trigger finishes a run before returning
 }
 
 func (f *fakeCleaner) Trigger(context.Context) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.triggers++
+	if f.bumpSeq {
+		f.status.Seq++
+	}
 	return f.triggered
 }
 
@@ -313,5 +317,38 @@ func TestRedisDisabledSettingsSaveKeepsRedisValues(t *testing.T) {
 	}
 	if set.RedisTrimIntervalMinutes == nil || *set.RedisTrimIntervalMinutes != 5 || set.RedisKeepAckedMinutes == nil || *set.RedisKeepAckedMinutes != 60 {
 		t.Fatalf("Redis settings wiped: %+v", set)
+	}
+}
+
+func TestRedisCleanNowSeenIsReadBeforeTrigger(t *testing.T) {
+	rc := &fakeCleaner{triggered: true, bumpSeq: true, status: redisadmin.CleanStatus{Seq: 1, KeepAcked: minutes(60)}}
+	e := newRedisEnv(t, &fakeReader{overview: okOverview()}, rc)
+	_, body := e.postForm(t, "/redis/cleanup", nil, "HX-Request", "true", "HX-Target", "redis-cleanup")
+	if !strings.Contains(body, "seen=1&running=1") {
+		t.Fatalf("seen must be the Seq from before Trigger:\n%s", body)
+	}
+}
+
+func TestRedisCleanNowDisabledWhenRedisUnavailable(t *testing.T) {
+	rc := &fakeCleaner{status: redisadmin.CleanStatus{KeepAcked: minutes(60)}}
+	for name, rd := range map[string]*fakeReader{
+		"error":       {err: errors.New("refused")},
+		"unsupported": {overview: redisadmin.Overview{Server: redisadmin.ServerInfo{Version: redisadmin.Version{Major: 6}}}},
+	} {
+		e := newRedisEnv(t, rd, rc)
+		_, body := e.get(t, "/redis")
+		if !regexp.MustCompile(`<button[^>]*disabled`).MatchString(body) || !strings.Contains(body, "off=1") {
+			t.Errorf("%s: Clean now not disabled:\n%s", name, body)
+		}
+		// The box's own polls keep the state.
+		_, box := e.get(t, "/redis/cleanup?off=1")
+		if !regexp.MustCompile(`<button[^>]*disabled`).MatchString(box) {
+			t.Errorf("%s: polled box enabled", name)
+		}
+	}
+	e := newRedisEnv(t, &fakeReader{overview: okOverview()}, rc)
+	_, body := e.get(t, "/redis")
+	if regexp.MustCompile(`<button[^>]*disabled`).MatchString(body) {
+		t.Error("healthy Redis: button disabled")
 	}
 }

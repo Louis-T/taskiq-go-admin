@@ -112,6 +112,10 @@ type streamPage struct {
 type cleanBox struct {
 	redisadmin.CleanStatus
 	Loc *time.Location
+	// Off disables Clean now: Redis is unreadable or older than 7.0.
+	Off bool
+	// OOB renders the box as an out-of-band swap of a body refresh.
+	OOB bool
 }
 
 // readError is the banner text for a reader failure.
@@ -161,8 +165,11 @@ func (s *Server) uiRedis(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data.Clean = s.cleanBox(r)
+	data.Clean.Off = data.Error != ""
 	if htmxTarget(r) == "redis-body" {
-		s.render(w, r, "redis", "redis-body", data)
+		// Keep the box's disabled state current, unless it is watching a run.
+		data.Clean.OOB = !data.Clean.Running
+		s.render(w, r, "redis", "redis-refresh", data)
 		return
 	}
 	s.render(w, r, "redis", "layout", data)
@@ -194,6 +201,7 @@ func (s *Server) uiRedisStream(w http.ResponseWriter, r *http.Request) {
 func (s *Server) uiRedisCleanup(w http.ResponseWriter, r *http.Request) {
 	box := s.cleanBox(r)
 	q := r.URL.Query()
+	box.Off = q.Get("off") == "1"
 	seen, _ := strconv.Atoi(q.Get("seen"))
 	if q.Get("running") == "1" && box.Seq > seen && box.Last != nil {
 		msg := fmt.Sprintf("Cleanup removed %d entries", box.Last.Removed)
@@ -206,12 +214,14 @@ func (s *Server) uiRedisCleanup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uiRedisCleanNow(w http.ResponseWriter, r *http.Request) {
+	// Status first: its Seq is what the box polls against, so a run that
+	// ends right after Trigger still shows its toast.
+	box := s.cleanBox(r)
 	started := s.opts.RedisCleaner.Trigger(r.Context())
 	if htmxTarget(r) == "" {
 		http.Redirect(w, r, "/redis", http.StatusSeeOther)
 		return
 	}
-	box := s.cleanBox(r)
 	box.Running = box.Running || started
 	s.render(w, r, "redis", "redis-cleanup", box)
 }
