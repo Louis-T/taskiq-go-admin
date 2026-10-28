@@ -129,7 +129,9 @@ from upstream issues:
 - `GET /api/tasks/{id}` returns one task.
 - `GET /api/tasks/histogram` returns chart data.
 - `GET /api/tasks/backup` downloads a SQLite snapshot.
-- `GET|PUT /api/settings` reads and changes the runtime settings.
+- `GET|PUT /api/settings` reads and changes the runtime settings. `PUT` replaces every field: one it leaves out is
+  turned off, so a script written before the Redis cleanup existed, sending only the three older fields, turns the
+  cleanup off. Send the full object, e.g. from a `GET`.
 - `GET /events` streams live updates (SSE).
 - `GET /healthz` answers the healthcheck. It does not depend on Redis.
 
