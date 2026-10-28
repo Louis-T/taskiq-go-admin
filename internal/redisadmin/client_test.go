@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"io"
+	"log"
 	"net"
 	"net/http/httptest"
 	"testing"
@@ -86,7 +88,10 @@ func TestMasterTLSDialer(t *testing.T) {
 
 	// A TLS server whose certificate is valid for 127.0.0.1, not for the
 	// REDIS_URL host that ParseURL puts in ServerName.
-	srv := httptest.NewTLSServer(nil)
+	srv := httptest.NewUnstartedServer(nil)
+	// The control handshake below fails on purpose: keep its log line out.
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.StartTLS()
 	defer srv.Close()
 	roots := x509.NewCertPool()
 	roots.AddCert(srv.Certificate())
