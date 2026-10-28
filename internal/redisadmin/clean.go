@@ -41,7 +41,7 @@ type RunSummary struct {
 
 // CleanStatus is the state of the cleaner for the admin page.
 type CleanStatus struct {
-	Running   bool
+	Running   bool        // running, or triggered and about to run
 	Seq       int         // increments at the end of every run
 	Last      *RunSummary // nil before the first run since start
 	Interval  *int        // copies of the current settings, for the page
@@ -218,7 +218,7 @@ func (c *Cleaner) run(ctx context.Context, started time.Time) (RunSummary, error
 func (c *Cleaner) Status(ctx context.Context) CleanStatus {
 	s, err := c.settings.GetSettings(ctx)
 	c.mu.Lock()
-	st := CleanStatus{Running: c.running, Seq: c.seq}
+	st := CleanStatus{Running: c.running || c.pending, Seq: c.seq}
 	if c.last != nil {
 		last := *c.last
 		st.Last = &last

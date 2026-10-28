@@ -147,3 +147,22 @@ func TestCleanerTriggerWhileRunning(t *testing.T) {
 		t.Errorf("runs = %d, Status = %+v; want exactly one finished run", n, st)
 	}
 }
+
+// A trigger the loop has not picked up yet already counts as running, so a
+// page refresh in between keeps polling the box.
+func TestCleanerStatusRunningWhilePending(t *testing.T) {
+	c, _, ft := newFakeCleaner(store.Settings{RedisKeepAckedMinutes: intp(5)})
+	ctx := context.Background()
+	if !c.Trigger(ctx) {
+		t.Fatal("Trigger() = false")
+	}
+	if st := c.Status(ctx); !st.Running {
+		t.Errorf("Status = %+v before the loop picks the trigger up; want Running", st)
+	}
+	stop := runLoop(c)
+	defer stop()
+	waitFor(t, "the run to end", func() bool { return c.Status(ctx).Seq == 1 })
+	if st := c.Status(ctx); st.Running || ft.runs.Load() != 1 {
+		t.Errorf("Status = %+v, runs = %d; want one finished run", st, ft.runs.Load())
+	}
+}
