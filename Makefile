@@ -18,7 +18,7 @@ test:
 	go test -race ./...
 
 e2e:
-	docker compose -f e2e/docker-compose.yml up -d --wait && go test -race -tags e2e ./... ; status=$$?; docker compose -f e2e/docker-compose.yml down -v; exit $$status
+	docker compose -f e2e/docker-compose.yml up -d --wait --build && go test -race -tags e2e ./... ; status=$$?; docker compose -f e2e/docker-compose.yml down -v; exit $$status
 
 lint:
 	test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }

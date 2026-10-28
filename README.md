@@ -25,6 +25,8 @@ It ships as one Go binary with SQLite built in: no cgo, no Node, nothing else to
 - **Stuck tasks** (opt-in): tasks running or queued for too long are flagged `stale`.
 - **Retention**: an optional TTL deletes old tasks in small batches, so incoming reports are never blocked.
 - **Backup**: download a consistent SQLite snapshot while the app keeps running.
+- **Redis** (opt-in): for `RedisStreamBroker` users, the backlog of every stream and list queue, pending messages
+  linked to their task, and a cleanup that trims acknowledged stream entries.
 
 | | |
 |---|---|
@@ -73,6 +75,10 @@ Open http://localhost:3000.
 | `TASKIQ_ADMIN_MAX_BODY_BYTES` | `67108864` | largest middleware report accepted (64 MiB); a bigger one loses that lifecycle step |
 | `TASKIQ_ADMIN_MAX_VALUE_BYTES` | `65536` | args, kwargs or return value stored whole up to this size (64 KiB); a bigger one is stored as `{"truncated":true,"bytes":N,"preview":"…"}` |
 | `TASKIQ_ADMIN_LOG_LEVEL` | `info` | `debug` also logs each request |
+| `REDIS_URL` | *(unset)* | `redis://`, `rediss://` or `unix://` URL; setting it (or `REDIS_SENTINELS`) enables the Redis section |
+| `REDIS_SENTINELS` | *(unset)* | comma-separated `host:port`: connect through Sentinel. Sentinels are reached without auth or TLS; the `REDIS_URL` host is then ignored, its credentials and TLS apply to the master only. With `rediss://`, list every sentinel: one discovered at runtime would be dialed with TLS |
+| `REDIS_SENTINEL_MASTER_NAME` | *(unset)* | master name, required with `REDIS_SENTINELS` |
+| `REDIS_DATABASE` | *(URL path, else `0`)* | logical database, in both modes. It wins over the `/N` path of `REDIS_URL` |
 
 The retention TTL and the stuck-task thresholds are runtime settings, edited in the Settings page or with
 `PUT /api/settings`. They are all off by default.
@@ -81,6 +87,12 @@ The retention TTL and the stuck-task thresholds are runtime settings, edited in 
   details and the 24h views answered in 0.4–330 ms, and ingestion held 3.5k events/s. Charts and stats over 7 to
   30 days have to count every task in the range: 1–10 s at that size. Slow results are reused for up to 30 s, so
   live updates don't pile up, but the first load stays slow. Keeping days rather than months keeps every page fast.
+- **Redis stream cleanup**: taskiq-redis' `RedisStreamBroker` acknowledges messages but never deletes them, so its
+  streams grow forever. The cleanup is off by default; set its interval and keep-age in Settings, or click
+  **Clean now**. **Every stream with a consumer group in that database is trimmed**, taskiq's or not. Only entries
+  acknowledged by every group are removed: pending or undelivered ones always stay, and a stream without a group is
+  never touched. It uses `XTRIM … ACKED` on Redis 8.2+, and a safe cut-off below the oldest unacknowledged entry on
+  older versions. The Redis section needs Redis 7.0 or later.
 - **Volume**: the image runs as UID 65532. Named volumes just work. A bind-mounted directory must be writable by that
   UID.
 - **Restarts**: tasks that were running when the panel restarted become `abandoned`. If their result arrives later,
@@ -117,7 +129,7 @@ from upstream issues:
 - `GET /api/tasks/backup` downloads a SQLite snapshot.
 - `GET|PUT /api/settings` reads and changes the runtime settings.
 - `GET /events` streams live updates (SSE).
-- `GET /healthz` answers the healthcheck.
+- `GET /healthz` answers the healthcheck. It does not depend on Redis.
 
 ## Development
 
@@ -126,11 +138,12 @@ Needs Go (version in `go.mod`).
 ```sh
 go test -race ./...    # SQLite runs in-process, no service needed
 TASKIQ_ADMIN_API_TOKEN=dev make run
+make e2e               # Docker: Redis 6.2/7.0/8.2, Sentinel and a real taskiq worker
 ```
 
 Tests cover the merge rules for every arrival order, the store (a conformance suite each database backend must
-pass), ingestion, cleanup batching, the HTTP API and the pages. The middleware compatibility was also checked
-end-to-end with the real Python middleware.
+pass), ingestion, cleanup batching, the HTTP API and the pages. The e2e suite (`-tags e2e`) runs the Redis code
+against real servers, and the whole panel against a real taskiq worker and its middleware.
 
 | Path | |
 |---|---|
@@ -141,6 +154,7 @@ end-to-end with the real Python middleware.
 | `internal/ingest` | group-commit writer |
 | `internal/events` | change notifications for live updates |
 | `internal/maintenance` | batched TTL cleanup, startup abandon sweep |
+| `internal/redisadmin` | Redis connection, queue reading, stream cleanup |
 | `internal/web` | handlers, templates, static assets |
 
 Only SQLite exists today. To add Postgres, MySQL or MariaDB, implement `store.Store` in `internal/store/<driver>`
