@@ -20,6 +20,7 @@
       <nav class="nav">
         <a href="/tasks" {{if eq .Nav "tasks"}}aria-current="page"{{end}}>Tasks</a>
         <a href="/types" {{if eq .Nav "types"}}aria-current="page"{{end}}>Task types</a>
+        {{if .Redis}}<a href="/redis" {{if eq .Nav "redis"}}aria-current="page"{{end}}>Redis</a>{{end}}
         <a href="/settings" {{if eq .Nav "settings"}}aria-current="page"{{end}}>Settings</a>
       </nav>
       <span class="spacer"></span>

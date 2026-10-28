@@ -32,6 +32,11 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWithRedis(t, nil, nil)
+}
+
+func newEnvWithRedis(t *testing.T, rd RedisReader, rc RedisCleaner) *env {
+	t.Helper()
 	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +47,7 @@ func newEnv(t *testing.T) *env {
 	ing.OnCommit = hub.Publish
 	go ing.Run()
 	purger := maintenance.NewPurger(st, time.Minute, maintenance.BatchConfig{Size: 100}, log)
-	s, err := NewServer(Options{APIToken: token, MaxBodyBytes: 4 << 20, MaxValueBytes: 64 << 10, PurgeInterval: time.Minute, PurgeBatchSize: 100, Version: "v-test"}, st, ing, purger, hub, log)
+	s, err := NewServer(Options{APIToken: token, MaxBodyBytes: 4 << 20, MaxValueBytes: 64 << 10, PurgeInterval: time.Minute, PurgeBatchSize: 100, Version: "v-test", Redis: rd, RedisCleaner: rc}, st, ing, purger, hub, log)
 	if err != nil {
 		t.Fatal(err)
 	}

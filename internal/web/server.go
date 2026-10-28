@@ -35,6 +35,9 @@ type Options struct {
 	PurgeBatchSize int
 	// Version is shown in the footer and /healthz.
 	Version string
+	// Redis and RedisCleaner enable the Redis section; both nil disables it.
+	Redis        RedisReader
+	RedisCleaner RedisCleaner
 }
 
 type Server struct {
@@ -88,6 +91,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", s.uiSettings)
 	mux.HandleFunc("POST /settings", s.uiSaveSettings)
 	mux.HandleFunc("POST /settings/purge", s.uiPurgeNow)
+
+	if s.opts.Redis != nil && s.opts.RedisCleaner != nil {
+		mux.HandleFunc("GET /redis", s.uiRedis)
+		mux.HandleFunc("GET /redis/streams/{key}", s.uiRedisStream)
+		mux.HandleFunc("GET /redis/cleanup", s.uiRedisCleanup)
+		mux.HandleFunc("POST /redis/cleanup", s.uiRedisCleanNow)
+	}
 
 	static, _ := fs.Sub(staticFS, "static")
 	fileServer := http.StripPrefix("/static/", http.FileServerFS(static))
