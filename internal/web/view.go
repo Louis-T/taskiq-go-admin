@@ -31,11 +31,13 @@ type pages struct {
 func parsePages() (*pages, error) {
 	p := &pages{sets: map[string]*template.Template{}}
 	for name, files := range map[string][]string{
-		"tasks":    {"list.html", "tasks.html"},
-		"type":     {"list.html", "type.html"},
-		"types":    {"types.html"},
-		"task":     {"task.html"},
-		"settings": {"settings.html"},
+		"tasks":        {"list.html", "tasks.html"},
+		"type":         {"list.html", "type.html"},
+		"types":        {"types.html"},
+		"task":         {"task.html"},
+		"settings":     {"settings.html"},
+		"redis":        {"redis.html"},
+		"redis-stream": {"redis_stream.html"},
 	} {
 		patterns := []string{"templates/layout.html", "templates/partials.html"}
 		for _, f := range files {
@@ -80,6 +82,15 @@ var funcs = template.FuncMap{
 	"wait":        humanWait,
 	"timeline":    buildTimeline,
 	"asset":       func(name string) string { return "/static/" + name + "?v=" + assetVersion },
+	"humanBytes":  humanBytes,
+	"streamURL":   streamURL,
+	"age":         age,
+	"ageSince":    ageSince,
+	"agoSince":    agoSince,
+	"minutesText": minutesText,
+	"took":        humanDur,
+	"derefInt":    func(v *int64) int64 { return *v },
+	"over":        func(d, limit time.Duration) bool { return limit > 0 && d > limit },
 	"positive":    func(v *float64) bool { return v != nil && *v > 0 },
 }
 

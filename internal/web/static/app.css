@@ -321,3 +321,7 @@ a.plain { color: inherit; }
 .tl-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .tl-legend b { color: var(--text); font-variant-numeric: tabular-nums; }
 .period { margin-bottom: 24px; }
+
+/* redis section */
+.warn { color: var(--s-running); font-weight: 600; }
+.redis-card h2 { margin: 0 0 8px; }

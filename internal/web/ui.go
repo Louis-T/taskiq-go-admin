@@ -25,11 +25,12 @@ type layoutData struct {
 	Loc     *time.Location
 	States  []task.State
 	Version string
+	Redis   bool
 }
 
 func (s *Server) layout(r *http.Request, title, nav string) layoutData {
 	loc := location(r)
-	return layoutData{Title: title, Nav: nav, TZ: loc.String(), Loc: loc, States: task.States, Version: s.opts.Version}
+	return layoutData{Title: title, Nav: nav, TZ: loc.String(), Loc: loc, States: task.States, Version: s.opts.Version, Redis: s.redisEnabled()}
 }
 
 // staleFilter returns the current stale criteria, nil when disabled.
@@ -331,6 +332,7 @@ type settingsPage struct {
 	Min, Max                       int
 	PurgeInterval                  string
 	PurgeBatchSize                 int
+	RedisTrim, RedisKeep           string
 	Message                        string
 	Error                          string
 }
@@ -353,6 +355,8 @@ func (s *Server) settingsData(r *http.Request) (settingsPage, error) {
 		Max:            store.TTLMaxMinutes,
 		PurgeInterval:  humanDuration(s.opts.PurgeInterval),
 		PurgeBatchSize: s.opts.PurgeBatchSize,
+		RedisTrim:      optionalInt(set.RedisTrimIntervalMinutes),
+		RedisKeep:      optionalInt(set.RedisKeepAckedMinutes),
 	}, err
 }
 
@@ -365,32 +369,49 @@ func (s *Server) uiSettings(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "settings", "layout", data)
 }
 
+// settingField is one numeric form field and where its value is stored.
+type settingField struct {
+	key, label string
+	min        int
+	dst        **int
+}
+
 func (s *Server) uiSaveSettings(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	var (
-		set     store.Settings
-		formErr string
-	)
-	for _, f := range []struct {
-		key, label string
-		dst        **int
-	}{
-		{"delete_old_ttl_minutes", "Retention", &set.DeleteOldTTLMinutes},
-		{"stale_running_minutes", "Running tasks threshold", &set.StaleRunningMinutes},
-		{"stale_queued_minutes", "Queued tasks threshold", &set.StaleQueuedMinutes},
-	} {
+	// SaveSettings replaces everything: start from the stored settings so
+	// the Redis ones survive when their fields are not on the form.
+	set, err := s.store.GetSettings(r.Context())
+	if err != nil {
+		s.uiError(w, r, err)
+		return
+	}
+	set.DeleteOldTTLMinutes, set.StaleRunningMinutes, set.StaleQueuedMinutes = nil, nil, nil
+	fields := []settingField{
+		{"delete_old_ttl_minutes", "Retention", store.TTLMinMinutes, &set.DeleteOldTTLMinutes},
+		{"stale_running_minutes", "Running tasks threshold", store.TTLMinMinutes, &set.StaleRunningMinutes},
+		{"stale_queued_minutes", "Queued tasks threshold", store.TTLMinMinutes, &set.StaleQueuedMinutes},
+	}
+	if s.redisEnabled() {
+		set.RedisTrimIntervalMinutes, set.RedisKeepAckedMinutes = nil, nil
+		fields = append(fields,
+			settingField{"redis_trim_interval_minutes", "Trim every", store.TTLMinMinutes, &set.RedisTrimIntervalMinutes},
+			settingField{"redis_keep_acked_minutes", "Keep acknowledged entries", 0, &set.RedisKeepAckedMinutes},
+		)
+	}
+	var formErr string
+	for _, f := range fields {
 		raw := strings.TrimSpace(r.PostForm.Get(f.key))
 		if raw == "" {
 			continue
 		}
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < store.TTLMinMinutes || n > store.TTLMaxMinutes {
+		if err != nil || n < f.min || n > store.TTLMaxMinutes {
 			formErr = f.label + " must be a whole number of minutes between " +
-				strconv.Itoa(store.TTLMinMinutes) + " and " + strconv.Itoa(store.TTLMaxMinutes) + "."
+				strconv.Itoa(f.min) + " and " + strconv.Itoa(store.TTLMaxMinutes) + "."
 			break
 		}
 		*f.dst = &n
@@ -413,6 +434,10 @@ func (s *Server) uiSaveSettings(w http.ResponseWriter, r *http.Request) {
 		data.TTL = r.PostForm.Get("delete_old_ttl_minutes")
 		data.StaleRunning = r.PostForm.Get("stale_running_minutes")
 		data.StaleQueued = r.PostForm.Get("stale_queued_minutes")
+		if s.redisEnabled() {
+			data.RedisTrim = r.PostForm.Get("redis_trim_interval_minutes")
+			data.RedisKeep = r.PostForm.Get("redis_keep_acked_minutes")
+		}
 	} else {
 		data.Message = "Settings saved."
 	}
@@ -442,6 +467,8 @@ func (s *Server) renderSettingsCard(w http.ResponseWriter, r *http.Request, data
 	}
 	s.render(w, r, "settings", "settings-card", data)
 }
+
+func (s *Server) redisEnabled() bool { return s.opts.Redis != nil && s.opts.RedisCleaner != nil }
 
 func htmxTarget(r *http.Request) string {
 	if r.Header.Get("HX-Request") != "true" || r.Header.Get("HX-History-Restore-Request") == "true" {

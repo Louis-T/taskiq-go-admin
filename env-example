@@ -2,3 +2,8 @@ TASKIQ_ADMIN_API_TOKEN=supersecret
 TASKIQ_ADMIN_DB_DRIVER=sqlite
 TASKIQ_ADMIN_DB_FILE_PATH=database/database.db
 PORT=3000
+# Redis section (optional): set REDIS_URL, or REDIS_SENTINELS for Sentinel.
+# REDIS_URL=redis://:password@localhost:6379/0
+# REDIS_SENTINELS=sentinel1:26379,sentinel2:26379
+# REDIS_SENTINEL_MASTER_NAME=mymaster
+# REDIS_DATABASE=0

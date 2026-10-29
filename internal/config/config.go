@@ -29,6 +29,8 @@ type Config struct {
 	PurgeBatchPause time.Duration
 
 	LogLevel slog.Level
+
+	Redis *Redis // nil when Redis is not configured
 }
 
 // Load reads the configuration from the environment.
@@ -81,5 +83,8 @@ func load(getenv func(string) string) (Config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(get("TASKIQ_ADMIN_LOG_LEVEL", "info"))); err != nil {
 		errs = append(errs, errors.New("TASKIQ_ADMIN_LOG_LEVEL must be debug, info, warn or error"))
 	}
+	var redisErrs []error
+	c.Redis, redisErrs = parseRedis(get)
+	errs = append(errs, redisErrs...)
 	return c, errors.Join(errs...)
 }

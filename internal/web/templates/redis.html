@@ -1,0 +1,99 @@
+{{define "content"}}
+<div class="page-head">
+  <div>
+    <h1>Redis</h1>
+    <p class="muted small">Queues in this Redis database and the cleanup of acknowledged stream entries.</p>
+  </div>
+</div>
+{{template "redis-body" .}}
+{{template "redis-cleanup" .Clean}}
+{{end}}
+
+{{define "redis-refresh"}}{{template "redis-body" .}}{{if .Clean.OOB}}{{template "redis-cleanup" .Clean}}{{end}}{{end}}
+
+{{define "redis-body"}}
+<div id="redis-body" hx-get="/redis" hx-trigger="every 5s [document.visibilityState==='visible']" hx-swap="outerHTML">
+  {{if .Error}}
+  <p class="alert alert-error" role="alert">{{.Error}}</p>
+  {{else}}
+  <section class="card stats-card">
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-label">Server</span>
+        <span class="stat-value">{{.Server.Version}}</span>
+        <span class="stat-sub">{{.Server.Mode}}{{if .Server.MasterName}} · {{.Server.MasterName}}{{end}} · db {{.Server.DB}}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Memory</span>
+        <span class="stat-value">{{humanBytes .Server.UsedMemory}}</span>
+        <span class="stat-sub">{{if .Server.MaxMemory}}of {{humanBytes .Server.MaxMemory}} maxmemory{{else}}no maxmemory{{end}}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Clients</span>
+        <span class="stat-value">{{.Server.Clients}}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Uptime</span>
+        <span class="stat-value">{{age .Server.Uptime}}</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card redis-card">
+    <h2>Queues</h2>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Key</th><th>Type</th><th class="num">Length</th><th class="num">Pending</th><th class="num">Oldest pending</th><th class="num">Groups</th><th class="num">Memory</th></tr>
+        </thead>
+        <tbody>
+          {{range .Queues}}
+          <tr>
+            <td class="name">{{if eq .Type "stream"}}<a href="{{streamURL .Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}}</td>
+            <td><span class="badge">{{.Type}}</span></td>
+            <td class="num">{{.Length}}</td>
+            {{if eq .Type "stream"}}
+            <td class="num{{if .Warn}} warn{{end}}">{{.Pending}}</td>
+            <td class="num{{if .Warn}} warn{{end}}">{{ageSince .OldestPending}}</td>
+            <td class="num">{{.Groups}}</td>
+            {{else}}
+            <td class="num muted">—</td><td class="num muted">—</td><td class="num muted">—</td>
+            {{end}}
+            <td class="num">{{humanBytes .MemoryBytes}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="7" class="empty">No queue found in this database.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+</div>
+{{end}}
+
+{{define "redis-cleanup"}}
+<section id="redis-cleanup" class="card redis-card"{{if .OOB}} hx-swap-oob="true"{{end}}
+  hx-get="/redis/cleanup?seen={{.Seq}}{{if .Running}}&running=1{{end}}{{if .Off}}&off=1{{end}}"
+  hx-trigger="{{if .Running}}every 1s{{else}}every 5s [document.visibilityState==='visible']{{end}}" hx-swap="outerHTML">
+  <div class="page-head">
+    <h2>Stream cleanup</h2>
+    <form method="post" action="/redis/cleanup" hx-post="/redis/cleanup" hx-target="#redis-cleanup" hx-swap="outerHTML">
+      <button type="submit" class="btn btn-outline"
+        {{if .Running}}disabled{{else if .Off}}disabled title="Redis is unavailable"{{else if not .KeepAcked}}disabled title="Set a keep-acked age in Settings first"{{end}}>{{if .Running}}Running…{{else}}Clean now{{end}}</button>
+    </form>
+  </div>
+  <p>
+    {{if .Interval}}Every <b>{{minutesText .Interval}}</b>{{else}}Automatic trim <b>off</b>{{end}}
+    · {{if .KeepAcked}}keep acknowledged entries <b>{{minutesText .KeepAcked}}</b>{{else}}keep age <b>not set</b>{{end}}
+    {{with .Last}}{{if .Mode}}· mode <b>{{.Mode}}</b>{{end}}{{end}}
+  </p>
+  {{with .Last}}
+    {{if .Err}}<p class="alert alert-error" role="alert">Last run {{fmtTime $.Loc .Started false}} failed: {{.Err}}</p>
+    {{else}}<p class="muted">Last run {{fmtTime $.Loc .Started false}} · {{.Streams}} streams · {{.Removed}} entries removed · {{took .Took}}</p>{{end}}
+  {{else}}
+  <p class="muted">No run since the server started.</p>
+  {{end}}
+  <p class="muted small"><a href="/settings">Change these in Settings →</a></p>
+</section>
+{{end}}

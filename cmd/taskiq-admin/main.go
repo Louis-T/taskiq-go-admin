@@ -20,6 +20,7 @@ import (
 	"github.com/louis-t/taskiq-go-admin/internal/events"
 	"github.com/louis-t/taskiq-go-admin/internal/ingest"
 	"github.com/louis-t/taskiq-go-admin/internal/maintenance"
+	"github.com/louis-t/taskiq-go-admin/internal/redisadmin"
 	"github.com/louis-t/taskiq-go-admin/internal/store"
 	"github.com/louis-t/taskiq-go-admin/internal/store/cache"
 	"github.com/louis-t/taskiq-go-admin/internal/store/sqlite"
@@ -80,6 +81,18 @@ func openStore(ctx context.Context, cfg config.Config) (store.Store, error) {
 	return nil, fmt.Errorf("unsupported database driver %q", cfg.DBDriver)
 }
 
+// keepAcked reads the keep-age of acknowledged stream entries from the
+// settings; ok=false when it is not set.
+func keepAcked(s store.Store) func(ctx context.Context) (time.Duration, bool) {
+	return func(ctx context.Context) (time.Duration, bool) {
+		set, err := s.GetSettings(ctx)
+		if err != nil || set.RedisKeepAckedMinutes == nil {
+			return 0, false
+		}
+		return time.Duration(*set.RedisKeepAckedMinutes) * time.Minute, true
+	}
+}
+
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -106,14 +119,35 @@ func run() error {
 	purger := maintenance.NewPurger(st, cfg.PurgeInterval, batch, log)
 	purger.OnChange = hub.Publish
 
-	srv, err := web.NewServer(web.Options{
+	cached := cache.New(st)
+	opts := web.Options{
 		APIToken:       cfg.APIToken,
 		MaxBodyBytes:   cfg.MaxBodyBytes,
 		MaxValueBytes:  cfg.MaxValueBytes,
 		PurgeInterval:  cfg.PurgeInterval,
 		PurgeBatchSize: cfg.PurgeBatchSize,
 		Version:        buildVersion(),
-	}, cache.New(st), ing, purger, hub, log)
+	}
+	var cleaner *redisadmin.Cleaner
+	if cfg.Redis != nil {
+		// No I/O here: Redis being down must not stop the app.
+		client, err := redisadmin.Connect(*cfg.Redis)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		reader := redisadmin.NewReader(client, keepAcked(cached))
+		cleaner = redisadmin.NewCleaner(reader, cached, batch, log)
+		opts.Redis, opts.RedisCleaner = reader, cleaner
+		// Never log the URL: it may hold a password.
+		if cfg.Redis.IsSentinel() {
+			log.Info("redis section enabled", "mode", "sentinel", "master", cfg.Redis.MasterName, "db", cfg.Redis.DB)
+		} else {
+			log.Info("redis section enabled", "mode", "standalone", "db", cfg.Redis.DB)
+		}
+	}
+
+	srv, err := web.NewServer(opts, cached, ing, purger, hub, log)
 	if err != nil {
 		return err
 	}
@@ -141,6 +175,9 @@ func run() error {
 		}
 		purger.Run(bgCtx)
 	})
+	if cleaner != nil {
+		bg.Go(func() { cleaner.Run(bgCtx) })
+	}
 
 	serveErr := make(chan error, 1)
 	go func() {

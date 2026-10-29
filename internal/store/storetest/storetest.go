@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ func Run(t *testing.T, newStore Factory) {
 		"AbandonRunning":      testAbandonRunning,
 		"Settings":            testSettings,
 		"NotFound":            testNotFound,
+		"KnownTaskIDs":        testKnownTaskIDs,
 		"BackupOrUnsupported": testBackup,
 		"StaleAndCount":       testStaleAndCount,
 		"TaskTypesAndStats":   testTaskTypesAndStats,
@@ -401,11 +403,49 @@ func testSettings(t *testing.T, s store.Store) {
 	if got.DeleteOldTTLMinutes != nil || got.StaleRunningMinutes != nil || got.StaleQueuedMinutes != nil {
 		t.Fatalf("cleared %+v", got)
 	}
+	if got.RedisTrimIntervalMinutes != nil || got.RedisKeepAckedMinutes != nil {
+		t.Fatalf("redis settings not nil by default %+v", got)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{RedisTrimIntervalMinutes: ptr(5), RedisKeepAckedMinutes: ptr(0)}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetSettings(ctx)
+	if got.RedisTrimIntervalMinutes == nil || *got.RedisTrimIntervalMinutes != 5 || got.RedisKeepAckedMinutes == nil || *got.RedisKeepAckedMinutes != 0 {
+		t.Fatalf("redis settings %+v", got)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{RedisKeepAckedMinutes: ptr(-1)}); err == nil || !strings.Contains(err.Error(), "redis_keep_acked_minutes") {
+		t.Fatalf("keep acked -1: %v", err)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{RedisTrimIntervalMinutes: ptr(0)}); err == nil || !strings.Contains(err.Error(), "redis_trim_interval_minutes") {
+		t.Fatalf("trim interval 0: %v", err)
+	}
+	if err := s.SaveSettings(ctx, store.Settings{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetSettings(ctx)
+	if got.RedisTrimIntervalMinutes != nil || got.RedisKeepAckedMinutes != nil {
+		t.Fatalf("redis settings not cleared %+v", got)
+	}
 }
 
 func testNotFound(t *testing.T, s store.Store) {
 	if _, err := s.GetTask(context.Background(), "missing"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func testKnownTaskIDs(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mustApply(t, s, queuedEvent("a", "x", base), queuedEvent("b", "x", base))
+	got, err := s.KnownTaskIDs(ctx, []string{"a", "missing", "b", "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got["a"] || !got["b"] {
+		t.Fatalf("KnownTaskIDs = %v; want a and b", got)
+	}
+	if got, err := s.KnownTaskIDs(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("KnownTaskIDs(nil) = %v, %v; want empty", got, err)
 	}
 }
 

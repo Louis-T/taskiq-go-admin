@@ -1,0 +1,74 @@
+{{define "content"}}
+<p><a class="btn btn-outline" href="/redis">← Back to Redis</a></p>
+{{template "redis-stream-body" .}}
+{{end}}
+
+{{define "redis-stream-body"}}
+<div id="redis-stream-body" hx-get="{{streamURL .Key}}" hx-trigger="every 5s [document.visibilityState==='visible']" hx-swap="outerHTML">
+  <div class="page-head">
+    <h1 class="mono">{{.Key}}</h1>
+    <span class="badge">stream</span>
+  </div>
+  {{if .Error}}
+  <p class="alert alert-error" role="alert">{{.Error}}</p>
+  {{else}}
+  {{with .Detail}}
+  <section class="card stats-card">
+    <div class="stats">
+      <div class="stat"><span class="stat-label">Length</span><span class="stat-value">{{.Length}}</span></div>
+      <div class="stat"><span class="stat-label">First entry</span><span class="stat-value">{{agoSince .FirstEntry}}</span></div>
+      <div class="stat"><span class="stat-label">Last entry</span><span class="stat-value">{{agoSince .LastEntry}}</span></div>
+      <div class="stat"><span class="stat-label">Trimmable now</span><span class="stat-value">{{if not .Groups}}never trimmed{{else if .TrimmableAtLeast}}at least {{.Trimmable}}{{else if .TrimmableCapped}}{{.Trimmable}}+{{else}}{{.Trimmable}}{{end}}</span></div>
+    </div>
+  </section>
+  {{if not .Groups}}<p class="muted small">No consumer group: nothing can be proven acknowledged, so the cleanup leaves this stream alone.</p>{{end}}
+
+  {{range .Groups}}
+  <section class="card redis-card">
+    <h2>Consumer group: {{.Name}}</h2>
+    <p class="muted">last delivered <span class="mono">{{.LastDelivered}}</span> · lag {{if .Lag}}{{derefInt .Lag}}{{else}}unknown{{end}} · pending {{.Pending}}</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Consumer</th><th class="num">Pending</th><th class="num">Idle</th></tr></thead>
+        <tbody>
+          {{range .Consumers}}
+          <tr>
+            <td class="mono">{{.Name}}</td>
+            <td class="num{{if and .Pending (over .Idle $.Stale)}} warn{{end}}">{{.Pending}}</td>
+            <td class="num{{if and .Pending (over .Idle $.Stale)}} warn{{end}}">{{age .Idle}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="3" class="empty">No consumer.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+
+  <section class="card redis-card">
+    <h2>Oldest pending messages</h2>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Entry ID</th><th>Task</th><th>Consumer</th><th class="num">Idle</th><th class="num">Deliveries</th></tr></thead>
+        <tbody>
+          {{range .OldestPending}}
+          <tr>
+            <td class="mono">{{.ID}}</td>
+            <td>{{if not .TaskID}}<span class="muted">not a taskiq message</span>{{else if index $.Known .TaskID}}<a href="/tasks/{{pathEscape .TaskID}}">{{shortName .TaskName}}</a>{{else}}{{shortName .TaskName}}{{end}}</td>
+            <td class="mono">{{.Consumer}}</td>
+            <td class="num{{if over .Idle $.Stale}} warn{{end}}">{{age .Idle}}</td>
+            <td class="num">{{.Deliveries}}</td>
+          </tr>
+          {{else}}
+          <tr><td colspan="5" class="empty">Nothing pending.</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">The task name links to its page in Tasks when the admin has that task.</p>
+  </section>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

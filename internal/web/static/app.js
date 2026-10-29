@@ -45,6 +45,9 @@
     el._t = setTimeout(function () { el.classList.remove("show"); }, 1800);
   }
 
+  // Server-triggered toasts (HX-Trigger: {"toast": "..."}).
+  document.body.addEventListener("toast", function (e) { toast(e.detail.value); });
+
   document.addEventListener("click", function (ev) {
     var copy = ev.target.closest("[data-copy]");
     if (copy) {

@@ -32,6 +32,11 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWithRedis(t, nil, nil)
+}
+
+func newEnvWithRedis(t *testing.T, rd RedisReader, rc RedisCleaner) *env {
+	t.Helper()
 	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +47,7 @@ func newEnv(t *testing.T) *env {
 	ing.OnCommit = hub.Publish
 	go ing.Run()
 	purger := maintenance.NewPurger(st, time.Minute, maintenance.BatchConfig{Size: 100}, log)
-	s, err := NewServer(Options{APIToken: token, MaxBodyBytes: 4 << 20, MaxValueBytes: 64 << 10, PurgeInterval: time.Minute, PurgeBatchSize: 100, Version: "v-test"}, st, ing, purger, hub, log)
+	s, err := NewServer(Options{APIToken: token, MaxBodyBytes: 4 << 20, MaxValueBytes: 64 << 10, PurgeInterval: time.Minute, PurgeBatchSize: 100, Version: "v-test", Redis: rd, RedisCleaner: rc}, st, ing, purger, hub, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,14 +280,14 @@ func TestAPIHistogram(t *testing.T) {
 
 func TestAPISettings(t *testing.T) {
 	e := newEnv(t)
-	req, _ := http.NewRequest(http.MethodPut, e.srv.URL+"/api/settings", strings.NewReader(`{"delete_old_ttl_minutes":30}`))
+	req, _ := http.NewRequest(http.MethodPut, e.srv.URL+"/api/settings", strings.NewReader(`{"delete_old_ttl_minutes":30,"redis_trim_interval_minutes":5,"redis_keep_acked_minutes":0}`))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("%v %v", resp, err)
 	}
 	resp.Body.Close()
 	_, body := e.get(t, "/api/settings")
-	if strings.TrimSpace(body) != `{"delete_old_ttl_minutes":30,"stale_running_minutes":null,"stale_queued_minutes":null}` {
+	if strings.TrimSpace(body) != `{"delete_old_ttl_minutes":30,"stale_running_minutes":null,"stale_queued_minutes":null,"redis_trim_interval_minutes":5,"redis_keep_acked_minutes":0}` {
 		t.Fatalf("%s", body)
 	}
 	req, _ = http.NewRequest(http.MethodPut, e.srv.URL+"/api/settings", strings.NewReader(`{"delete_old_ttl_minutes":0}`))

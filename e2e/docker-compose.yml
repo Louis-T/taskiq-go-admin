@@ -1,0 +1,117 @@
+# Redis servers for the e2e suite (`make e2e`, `go test -tags e2e ./...`).
+#
+# Host ports:
+#   redis82 6382, redis70 6370, redis62 6362        (bridge network, published)
+#   sentinel-master 6390, sentinel-replica 6391,
+#   sentinel 26379                                    (host network)
+#
+# Sentinel networking: the Go tests run on the host and connect to the address
+# Sentinel hands out for the master. With bridge networking that address would
+# be a container IP or name. So the Sentinel set uses `network_mode: host`:
+# master, replica and sentinel all listen on 127.0.0.1 with their own ports,
+# the sentinel monitors 127.0.0.1:6390 and therefore announces
+# 127.0.0.1:6390 (and 127.0.0.1:6391 for the replica), reachable from the host
+# as-is. This needs Linux Docker (or Docker Desktop with host networking on).
+#
+# Worker: `worker` is a real taskiq worker (e2e/worker) on redis82 db 2; it
+# reports to the admin that internal/web's e2e test serves on host port 3999,
+# reached through host.docker.internal (it logs failed reports until that
+# test runs). `kicker` (profile "kicker", not started by `up`) sends the
+# test's tasks: `docker compose -f e2e/docker-compose.yml run --rm kicker`.
+#
+# Only stop this stack with `docker compose -f e2e/docker-compose.yml down -v`.
+name: taskiq-admin-e2e
+
+x-healthcheck: &ping
+  interval: 1s
+  timeout: 2s
+  retries: 30
+
+x-worker: &worker
+  image: taskiq-admin-e2e-worker
+  environment:
+    REDIS_URL: redis://redis82:6379/2
+    ADMIN_URL: http://host.docker.internal:3999
+  extra_hosts: ["host.docker.internal:host-gateway"]
+
+services:
+  redis82:
+    image: redis:8.2
+    ports: ["6382:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      <<: *ping
+
+  redis70:
+    image: redis:7.0
+    ports: ["6370:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      <<: *ping
+
+  redis62:
+    image: redis:6.2
+    ports: ["6362:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      <<: *ping
+
+  sentinel-master:
+    image: redis:8.2
+    network_mode: host
+    command: ["redis-server", "--port", "6390", "--bind", "127.0.0.1", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6390", "ping"]
+      <<: *ping
+
+  sentinel-replica:
+    image: redis:8.2
+    network_mode: host
+    command: ["redis-server", "--port", "6391", "--bind", "127.0.0.1", "--save", "", "--appendonly", "no",
+              "--replicaof", "127.0.0.1", "6390"]
+    depends_on:
+      sentinel-master: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 6391 info replication | grep -q master_link_status:up"]
+      <<: *ping
+
+  sentinel:
+    image: redis:8.2
+    network_mode: host
+    # redis-sentinel needs a writable config file; write it at start-up.
+    command:
+      - sh
+      - -c
+      - |
+        cat > /tmp/sentinel.conf <<CONF
+        port 26379
+        bind 127.0.0.1
+        sentinel monitor mymaster 127.0.0.1 6390 1
+        sentinel down-after-milliseconds mymaster 2000
+        sentinel failover-timeout mymaster 10000
+        CONF
+        exec redis-sentinel /tmp/sentinel.conf
+    depends_on:
+      sentinel-replica: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 sentinel get-master-addr-by-name mymaster | grep -q 6390"]
+      <<: *ping
+
+  worker:
+    <<: *worker
+    build: worker
+    depends_on:
+      redis82: {condition: service_healthy}
+    # Healthy once the broker has created its consumer group: tasks kicked
+    # earlier would not be delivered.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, redis; assert redis.Redis.from_url(os.environ['REDIS_URL']).xinfo_groups('taskiq')"]
+      <<: *ping
+
+  kicker:
+    <<: *worker
+    profiles: [kicker]
+    pull_policy: never
+    command: ["python", "worker.py"]
+    depends_on:
+      worker: {condition: service_healthy}

@@ -45,6 +45,8 @@ var schema = []string{
 		INSERT INTO taskiq_admin_tasks_fts(taskiq_admin_tasks_fts, rowid, name) VALUES ('delete', old.rowid, old.name);
 		INSERT INTO taskiq_admin_tasks_fts(rowid, name) VALUES (new.rowid, new.name); END`,
 	`INSERT OR IGNORE INTO taskiq_admin_settings (key, value) VALUES ('delete_old_ttl_minutes', NULL)`,
+	`INSERT OR IGNORE INTO taskiq_admin_settings (key, value) VALUES ('redis_trim_interval_minutes', NULL)`,
+	`INSERT OR IGNORE INTO taskiq_admin_settings (key, value) VALUES ('redis_keep_acked_minutes', NULL)`,
 }
 
 func createSchema(ctx context.Context, db *sql.DB) error {
