@@ -4,11 +4,12 @@
 {{end}}
 
 {{define "redis-stream-body"}}
-<div id="redis-stream-body" hx-get="{{streamURL .Key}}" hx-trigger="every 5s [document.visibilityState==='visible']" hx-swap="outerHTML">
+<div id="redis-stream-body" hx-get="{{streamURL .Key}}" hx-trigger="every 10s [document.visibilityState==='visible']" hx-swap="outerHTML">
   <div class="page-head">
     <h1 class="mono">{{.Key}}</h1>
     <span class="badge">stream</span>
   </div>
+  {{template "redis-updated" .}}
   {{if .Error}}
   <p class="alert alert-error" role="alert">{{.Error}}</p>
   {{else}}

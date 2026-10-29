@@ -16,8 +16,10 @@ import (
 const TrimmableCap = 1000
 
 const (
-	defaultScanTTL = 30 * time.Second
-	maxPendingList = 20
+	defaultScanTTL     = 30 * time.Second
+	defaultOverviewTTL = 5 * time.Second
+	overviewTimeout    = 30 * time.Second
+	maxPendingList     = 20
 )
 
 // ErrNotStream is returned by Stream for a key that is not a stream.
@@ -34,8 +36,9 @@ type Queue struct {
 }
 
 type Overview struct {
-	Server ServerInfo
-	Queues []Queue // sorted by Key
+	Server    ServerInfo
+	Queues    []Queue // sorted by Key
+	FetchedAt time.Time
 }
 
 type Consumer struct {
@@ -79,19 +82,34 @@ type scannedKey struct{ key, typ string }
 
 // Reader inspects the queues of the configured database.
 type Reader struct {
-	c         *Client
-	keepAcked func(ctx context.Context) (time.Duration, bool)
-	scanTTL   time.Duration
+	c           *Client
+	keepAcked   func(ctx context.Context) (time.Duration, bool)
+	scanTTL     time.Duration
+	overviewTTL time.Duration
+	fetch       func(ctx context.Context) (Overview, error) // fetchOverview; replaced in tests
 
 	mu        sync.Mutex
 	scannedAt time.Time
 	scanned   []scannedKey
+
+	ovMu sync.Mutex
+	ov   *overviewCall // the last fetch, done or in flight
+}
+
+// overviewCall is one fetch of the overview, shared by every caller that
+// arrives while it runs or within overviewTTL after it succeeded.
+type overviewCall struct {
+	done chan struct{}
+	ov   Overview
+	err  error
 }
 
 // NewReader returns a Reader. keepAcked supplies the retention age used for
 // the "trimmable" figure; ok=false (or a nil func) means 0.
 func NewReader(c *Client, keepAcked func(ctx context.Context) (time.Duration, bool)) *Reader {
-	return &Reader{c: c, keepAcked: keepAcked, scanTTL: defaultScanTTL}
+	r := &Reader{c: c, keepAcked: keepAcked, scanTTL: defaultScanTTL, overviewTTL: defaultOverviewTTL}
+	r.fetch = r.fetchOverview
+	return r
 }
 
 // scan lists the streams and lists of the db, cached for scanTTL.
@@ -135,13 +153,49 @@ func dedupeKeys(keys []scannedKey) []scannedKey {
 }
 
 // Overview describes every stream and list of the database. On a server
-// older than 7.0 only Server is filled.
+// older than 7.0 only Server is filled. Viewers share one fetch: a result is
+// reused for overviewTTL, and callers arriving during a fetch wait for it,
+// so the Redis load doesn't grow with the number of open pages.
 func (r *Reader) Overview(ctx context.Context) (Overview, error) {
+	r.ovMu.Lock()
+	c := r.ov
+	if c == nil || !c.fresh(r.overviewTTL) {
+		c = &overviewCall{done: make(chan struct{})}
+		r.ov = c
+		// Detached from ctx: a caller leaving must not fail the others.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), overviewTimeout)
+		go func() {
+			defer cancel()
+			c.ov, c.err = r.fetch(fctx)
+			close(c.done)
+		}()
+	}
+	r.ovMu.Unlock()
+	select {
+	case <-c.done:
+		return c.ov, c.err
+	case <-ctx.Done():
+		return Overview{}, ctx.Err()
+	}
+}
+
+// fresh reports whether c is in flight, or done without error less than ttl
+// ago.
+func (c *overviewCall) fresh(ttl time.Duration) bool {
+	select {
+	case <-c.done:
+		return c.err == nil && time.Since(c.ov.FetchedAt) < ttl
+	default:
+		return true
+	}
+}
+
+func (r *Reader) fetchOverview(ctx context.Context) (Overview, error) {
 	info, err := r.c.ServerInfo(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
-	ov := Overview{Server: info}
+	ov := Overview{Server: info, FetchedAt: time.Now()}
 	if !info.Supported {
 		return ov, nil
 	}

@@ -147,6 +147,9 @@ func TestRedisOverview(t *testing.T) {
 	if strings.Contains(body, `href="/redis/streams/emails"`) {
 		t.Error("a list must not link to a stream page")
 	}
+	if !regexp.MustCompile(`Refreshes every 10 s while this tab is visible · updated \w{3} \d+ \d{2}:\d{2}:\d{2}`).MatchString(body) {
+		t.Errorf("no refresh line:\n%s", body)
+	}
 	// Alone for the htmx refresh.
 	_, part := e.get(t, "/redis", "HX-Request", "true", "HX-Target", "redis-body")
 	if strings.Contains(part, "<html") || !strings.Contains(part, "taskiq:high") {
@@ -160,7 +163,7 @@ func TestRedisPageShowsReaderError(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("status %d", code)
 	}
-	for _, want := range []string{"alert-error", "refused", "every 5s [document.visibilityState==='visible']"} {
+	for _, want := range []string{"alert-error", "refused", `id="redis-body" hx-get="/redis" hx-trigger="every 10s [document.visibilityState==='visible']"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}

@@ -62,7 +62,9 @@ func newTestReader(t *testing.T, s readServer) (*Reader, *redis.Client) {
 	t.Helper()
 	rc := rawDB(t, s.addr, s.db)
 	c := connect(t, config.Redis{URL: "redis://" + s.addr, DB: s.db})
-	return NewReader(c, func(context.Context) (time.Duration, bool) { return 0, false }), rc
+	r := NewReader(c, func(context.Context) (time.Duration, bool) { return 0, false })
+	r.overviewTTL = 0 // each call reads Redis
+	return r, rc
 }
 
 func TestOverviewFindsQueues(t *testing.T) {

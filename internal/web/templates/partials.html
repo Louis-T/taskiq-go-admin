@@ -5,3 +5,5 @@
 </button>{{end}}
 
 {{define "spinner"}}<span class="spinner" aria-label="in progress"></span>{{end}}
+
+{{define "redis-updated"}}<p class="muted small redis-updated">Refreshes every 10 s while this tab is visible · updated {{shortTime .Loc .Updated}}</p>{{end}}

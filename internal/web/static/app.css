@@ -156,6 +156,8 @@ a:hover .badge { filter: brightness(1.08); }
 
 /* table */
 .table-wrap { overflow-x: auto; margin: -16px -16px 0; }
+/* After a heading or text, keep the table below it instead of flush with the card top. */
+.card > * + .table-wrap { margin-top: 0; }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { padding: 8px 12px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--border); }
 .table th { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; background: var(--surface); position: sticky; top: 0; }

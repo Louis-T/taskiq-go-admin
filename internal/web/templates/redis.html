@@ -12,7 +12,8 @@
 {{define "redis-refresh"}}{{template "redis-body" .}}{{if .Clean.OOB}}{{template "redis-cleanup" .Clean}}{{end}}{{end}}
 
 {{define "redis-body"}}
-<div id="redis-body" hx-get="/redis" hx-trigger="every 5s [document.visibilityState==='visible']" hx-swap="outerHTML">
+<div id="redis-body" hx-get="/redis" hx-trigger="every 10s [document.visibilityState==='visible']" hx-swap="outerHTML">
+  {{template "redis-updated" .}}
   {{if .Error}}
   <p class="alert alert-error" role="alert">{{.Error}}</p>
   {{else}}

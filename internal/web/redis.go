@@ -94,20 +94,22 @@ type queueRow struct {
 
 type redisPage struct {
 	layoutData
-	Server redisadmin.ServerInfo
-	Queues []queueRow
-	Error  string
-	Clean  cleanBox
-	Stale  time.Duration
+	Server  redisadmin.ServerInfo
+	Queues  []queueRow
+	Error   string
+	Clean   cleanBox
+	Stale   time.Duration
+	Updated time.Time // when the shown data was read
 }
 
 type streamPage struct {
 	layoutData
-	Key    string
-	Detail redisadmin.StreamDetail
-	Error  string
-	Stale  time.Duration   // 0: no threshold
-	Known  map[string]bool // task ids of OldestPending the admin has stored
+	Key     string
+	Detail  redisadmin.StreamDetail
+	Error   string
+	Stale   time.Duration   // 0: no threshold
+	Known   map[string]bool // task ids of OldestPending the admin has stored
+	Updated time.Time
 }
 
 type cleanBox struct {
@@ -153,7 +155,10 @@ func (s *Server) uiRedis(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
-	data := redisPage{layoutData: s.layout(r, "Redis", "redis"), Server: ov.Server, Stale: s.staleQueued(r)}
+	data := redisPage{layoutData: s.layout(r, "Redis", "redis"), Server: ov.Server, Stale: s.staleQueued(r), Updated: ov.FetchedAt}
+	if data.Updated.IsZero() {
+		data.Updated = time.Now()
+	}
 	switch {
 	case err != nil:
 		data.Error = readError(err, ov.Server.Version)
@@ -186,7 +191,7 @@ func (s *Server) uiRedisStream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data := streamPage{layoutData: s.layout(r, key, "redis"), Key: key, Detail: detail, Stale: s.staleQueued(r)}
+	data := streamPage{layoutData: s.layout(r, key, "redis"), Key: key, Detail: detail, Stale: s.staleQueued(r), Updated: time.Now()}
 	if err != nil {
 		data.Error = readError(err, redisadmin.Version{})
 	}
