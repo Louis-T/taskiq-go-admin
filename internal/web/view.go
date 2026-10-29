@@ -61,37 +61,39 @@ func (p *pages) execute(w io.Writer, page, block string, data any) error {
 }
 
 var funcs = template.FuncMap{
-	"fmtTime":     fmtTime,
-	"shortTime":   func(loc *time.Location, v any) string { return formatTime(loc, v, "Jan 2 15:04:05") },
-	"isoTime":     isoTime,
-	"shortName":   shortName,
-	"trunc":       trunc,
-	"jsonInline":  jsonInline,
-	"jsonPretty":  jsonPretty,
-	"returnValue": returnValue,
-	"deref":       deref,
-	"seconds":     seconds,
-	"duration":    taskDuration,
-	"percent":     func(f float64) string { return strconv.FormatFloat(f, 'f', 2, 64) + "%" },
-	"stateLabel":  func(s task.State) string { return string(s) },
-	"pathEscape":  url.PathEscape,
-	"typeURL":     typeURL,
-	"count":       func(m map[task.State]int64, s string) int64 { return m[task.State(s)] },
-	"ratio":       ratio,
-	"secs":        humanSeconds,
-	"wait":        humanWait,
-	"timeline":    buildTimeline,
-	"asset":       func(name string) string { return "/static/" + name + "?v=" + assetVersion },
-	"humanBytes":  humanBytes,
-	"streamURL":   streamURL,
-	"age":         age,
-	"ageSince":    ageSince,
-	"agoSince":    agoSince,
-	"minutesText": minutesText,
-	"took":        humanDur,
-	"derefInt":    func(v *int64) int64 { return *v },
-	"over":        func(d, limit time.Duration) bool { return limit > 0 && d > limit },
-	"positive":    func(v *float64) bool { return v != nil && *v > 0 },
+	"fmtTime":       fmtTime,
+	"shortTime":     func(loc *time.Location, v any) string { return formatTime(loc, v, "Jan 2 15:04:05") },
+	"isoTime":       isoTime,
+	"shortName":     shortName,
+	"trunc":         trunc,
+	"jsonInline":    jsonInline,
+	"listValue":     listValue,
+	"truncatedNote": truncatedNote,
+	"jsonPretty":    jsonPretty,
+	"returnValue":   returnValue,
+	"deref":         deref,
+	"seconds":       seconds,
+	"duration":      taskDuration,
+	"percent":       func(f float64) string { return strconv.FormatFloat(f, 'f', 2, 64) + "%" },
+	"stateLabel":    func(s task.State) string { return string(s) },
+	"pathEscape":    url.PathEscape,
+	"typeURL":       typeURL,
+	"count":         func(m map[task.State]int64, s string) int64 { return m[task.State(s)] },
+	"ratio":         ratio,
+	"secs":          humanSeconds,
+	"wait":          humanWait,
+	"timeline":      buildTimeline,
+	"asset":         func(name string) string { return "/static/" + name + "?v=" + assetVersion },
+	"humanBytes":    humanBytes,
+	"streamURL":     streamURL,
+	"age":           age,
+	"ageSince":      ageSince,
+	"agoSince":      agoSince,
+	"minutesText":   minutesText,
+	"took":          humanDur,
+	"derefInt":      func(v *int64) int64 { return *v },
+	"over":          func(d, limit time.Duration) bool { return limit > 0 && d > limit },
+	"positive":      func(v *float64) bool { return v != nil && *v > 0 },
 }
 
 // assetVersion fingerprints the embedded static files, so browsers fetch new
@@ -200,6 +202,39 @@ func jsonInline(raw json.RawMessage) string {
 		return ""
 	}
 	return string(raw)
+}
+
+// truncatedMarker decodes the marker capJSON stores in place of an oversized
+// value; ok is false for any other value, including look-alikes.
+func truncatedMarker(raw json.RawMessage) (preview string, size int64, ok bool) {
+	if len(raw) == 0 || raw[0] != '{' {
+		return "", 0, false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil || len(m) != 3 || string(m["truncated"]) != "true" {
+		return "", 0, false
+	}
+	if json.Unmarshal(m["bytes"], &size) != nil || json.Unmarshal(m["preview"], &preview) != nil {
+		return "", 0, false
+	}
+	return preview, size, true
+}
+
+// listValue is a value as the task list shows it: the preview of a value
+// stored truncated, the JSON text of any other.
+func listValue(raw json.RawMessage) string {
+	if preview, _, ok := truncatedMarker(raw); ok {
+		return preview
+	}
+	return jsonInline(raw)
+}
+
+// truncatedNote is appended to a list tooltip for a value stored truncated.
+func truncatedNote(raw json.RawMessage) string {
+	if _, size, ok := truncatedMarker(raw); ok {
+		return " (truncated, " + humanBytes(size) + " in total)"
+	}
+	return ""
 }
 
 func jsonPretty(raw json.RawMessage) string {

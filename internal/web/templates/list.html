@@ -139,9 +139,9 @@
           </td>
           <td class="nowrap mono"><a href="/tasks/{{pathEscape $t.ID}}">{{trunc 13 $t.ID}}</a>{{template "copy" $t.ID}}</td>
           <td>{{$u := $.P.URL "state" (stateLabel $t.State)}}<a href="{{$u}}" hx-get="{{$u}}" hx-target="#main" hx-swap="innerHTML" title="Filter by state">{{template "state" $t.State}}</a>{{if $.Stale.IsStale $t}} <span class="badge badge-stale" title="No report received for longer than the stale threshold">stale</span>{{end}}{{if $t.Attempt}} <span class="muted small" title="Retry number">#{{$t.Attempt}}</span>{{end}}</td>
-          <td class="mono" title="{{trunc 500 (jsonInline $t.Args)}}">{{trunc 25 (jsonInline $t.Args)}}</td>
-          <td class="mono" title="{{trunc 500 (jsonInline $t.Kwargs)}}">{{trunc 22 (jsonInline $t.Kwargs)}}</td>
-          <td class="mono">{{if $t.State.Terminal}}{{trunc 15 (jsonInline (returnValue $t.ReturnValue))}}{{else}}<span class="muted">…</span>{{end}}</td>
+          <td class="mono" title="{{trunc 500 (listValue $t.Args)}}{{truncatedNote $t.Args}}">{{trunc 25 (listValue $t.Args)}}</td>
+          <td class="mono" title="{{trunc 500 (listValue $t.Kwargs)}}{{truncatedNote $t.Kwargs}}">{{trunc 22 (listValue $t.Kwargs)}}</td>
+          {{if $t.State.Terminal}}{{$rv := returnValue $t.ReturnValue}}<td class="mono" title="{{trunc 500 (listValue $rv)}}{{truncatedNote $rv}}">{{trunc 15 (listValue $rv)}}</td>{{else}}<td class="mono"><span class="muted">…</span></td>{{end}}
           <td class="center">
             {{if $t.Error}}
             <button type="button" class="btn btn-outline btn-xs" data-dialog="err-{{$i}}" aria-label="View error">view</button>

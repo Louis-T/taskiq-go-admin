@@ -551,3 +551,50 @@ func TestTypePages(t *testing.T) {
 }
 
 func ptrInt(v int) *int { return &v }
+
+func TestListValue(t *testing.T) {
+	marker := json.RawMessage(`{"truncated":true,"bytes":2400005,"preview":"[[0.1, 0.2…"}`)
+	for _, tc := range []struct {
+		raw         json.RawMessage
+		value, note string
+	}{
+		{nil, "", ""},
+		{json.RawMessage(`[1,2]`), `[1,2]`, ""},
+		{marker, `[[0.1, 0.2…`, " (truncated, 2.3 MB in total)"},
+		// A real value that only looks like a marker stays as it is.
+		{json.RawMessage(`{"truncated":true,"bytes":3,"preview":"x","more":1}`), `{"truncated":true,"bytes":3,"preview":"x","more":1}`, ""},
+		{json.RawMessage(`{"truncated":false,"bytes":3,"preview":"x"}`), `{"truncated":false,"bytes":3,"preview":"x"}`, ""},
+	} {
+		if got := listValue(tc.raw); got != tc.value {
+			t.Errorf("listValue(%s) = %q; want %q", tc.raw, got, tc.value)
+		}
+		if got := truncatedNote(tc.raw); got != tc.note {
+			t.Errorf("truncatedNote(%s) = %q; want %q", tc.raw, got, tc.note)
+		}
+	}
+}
+
+// The task list shows the preview of a value stored truncated, not the
+// marker object.
+func TestListShowsTruncatedPreview(t *testing.T) {
+	e := newEnv(t)
+	vectors := `[` + strings.Repeat(`0.123456789,`, 20_000) + `0]`
+	now := time.Now().UTC()
+	for _, step := range []struct{ kind, body string }{
+		{"queued", `{"args":[` + vectors + `],"kwargs":{},"labels":{},"queuedAt":"` + now.Format("2006-01-02T15:04:05") + `","taskName":"app:upsert","worker":"w"}`},
+		{"executed", `{"finishedAt":"` + now.Format("2006-01-02T15:04:05") + `","executionTime":1,"error":null,"returnValue":{"return_value":` + vectors + `}}`},
+	} {
+		if r := e.post(t, "/api/tasks/huge/"+step.kind, step.body, token); r.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d", step.kind, r.StatusCode)
+		}
+	}
+	_, body := e.get(t, "/tasks")
+	if strings.Contains(body, "&#34;truncated&#34;") || strings.Contains(body, `"truncated"`) {
+		t.Errorf("list shows the truncation marker:\n%s", body)
+	}
+	for _, want := range []string{`[[0.123456789,0.123456789…`, `[0.123456789,0.…`, "(truncated, 234.4 KB in total)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}
