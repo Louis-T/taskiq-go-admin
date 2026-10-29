@@ -29,45 +29,45 @@ type Client struct {
 // Connect builds the client for cfg; it does no I/O. cfg.DB must already be
 // resolved (config does it) and always selects the database.
 func Connect(cfg config.Redis) (*Client, error) {
-	var fromURL *redis.Options
-	if cfg.URL != "" {
+	var rdb redis.UniversalClient
+	switch {
+	case cfg.URL != "":
 		o, err := redis.ParseURL(cfg.URL)
 		if err != nil {
 			return nil, fmt.Errorf("REDIS_URL: %w", err)
 		}
-		fromURL = o
-	}
-
-	var rdb redis.UniversalClient
-	if cfg.IsSentinel() {
-		// The URL host is ignored; its credentials and TLS apply to the
-		// master only, sentinels are reached without auth or TLS.
-		// FailoverOptions.Username/Password are master-only, but TLSConfig
-		// would also be used for the sentinels (and carries the URL host as
-		// ServerName), so TLS goes through masterTLSDialer instead.
+		o.DB = cfg.DB
+		rdb = redis.NewClient(o)
+	case cfg.IsSentinel():
+		// FailoverOptions.TLSConfig would also be used for the sentinels, so
+		// the master's TLS goes through masterTLSDialer instead.
 		fo := &redis.FailoverOptions{
-			MasterName:    cfg.MasterName,
-			SentinelAddrs: cfg.Sentinels,
-			DB:            cfg.DB,
+			MasterName:       cfg.MasterName,
+			SentinelAddrs:    cfg.Sentinels,
+			SentinelUsername: cfg.SentinelUsername,
+			SentinelPassword: cfg.SentinelPassword,
+			Username:         cfg.Username,
+			Password:         cfg.Password,
+			DB:               cfg.DB,
 		}
-		if fromURL != nil {
-			fo.Username, fo.Password = fromURL.Username, fromURL.Password
-			if fromURL.TLSConfig != nil {
-				fo.Dialer = masterTLSDialer(cfg.Sentinels, fromURL.TLSConfig)
-			}
+		if cfg.TLS {
+			fo.Dialer = masterTLSDialer(cfg.Sentinels, &tls.Config{MinVersion: tls.VersionTLS12})
 		}
 		rdb = redis.NewFailoverClient(fo)
-	} else {
-		if fromURL == nil {
-			return nil, errors.New("REDIS_URL is required without REDIS_SENTINELS")
+	case cfg.Addr != "":
+		o := &redis.Options{Addr: cfg.Addr, Username: cfg.Username, Password: cfg.Password, DB: cfg.DB}
+		if cfg.TLS {
+			host, _, _ := net.SplitHostPort(cfg.Addr)
+			o.TLSConfig = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
 		}
-		fromURL.DB = cfg.DB
-		rdb = redis.NewClient(fromURL)
+		rdb = redis.NewClient(o)
+	default:
+		return nil, errors.New("no Redis address: set REDIS_URL, REDIS_HOST or REDIS_SENTINELS")
 	}
 	return &Client{rdb: rdb, cfg: cfg}, nil
 }
 
-// masterTLSDialer is the Sentinel-mode dialer when REDIS_URL asks for TLS.
+// masterTLSDialer is the Sentinel-mode dialer when REDIS_TLS is set.
 // go-redis uses one Dialer for both sentinel and master connections: the
 // configured sentinels are dialed in plain TCP, every other address (the
 // master Sentinel returned) with TLS verified against the dialed host.

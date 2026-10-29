@@ -75,10 +75,14 @@ Open http://localhost:3000.
 | `TASKIQ_ADMIN_MAX_BODY_BYTES` | `67108864` | largest middleware report accepted (64 MiB); a bigger one loses that lifecycle step |
 | `TASKIQ_ADMIN_MAX_VALUE_BYTES` | `65536` | args, kwargs or return value stored whole up to this size (64 KiB); a bigger one is stored as `{"truncated":true,"bytes":N,"preview":"…"}` |
 | `TASKIQ_ADMIN_LOG_LEVEL` | `info` | `debug` also logs each request |
-| `REDIS_URL` | *(unset)* | `redis://`, `rediss://` or `unix://` URL; setting it (or `REDIS_SENTINELS`) enables the Redis section |
-| `REDIS_SENTINELS` | *(unset)* | comma-separated `host:port`: connect through Sentinel. Sentinels are reached without auth or TLS; the `REDIS_URL` host is then ignored, its credentials and TLS apply to the master only. With `rediss://`, list every sentinel: one discovered at runtime would be dialed with TLS |
-| `REDIS_SENTINEL_MASTER_NAME` | *(unset)* | master name, required with `REDIS_SENTINELS` |
-| `REDIS_DATABASE` | *(URL path, else `0`)* | logical database, in both modes. It wins over the `/N` path of `REDIS_URL` |
+| `REDIS_URL` | *(unset)* | `redis://`, `rediss://` or `unix://` URL holding the whole connection (database in the `/N` path, or `?db=N` for `unix://`). Enables the Redis section. It cannot be combined with the variables below |
+| `REDIS_HOST` / `REDIS_PORT` | *(unset)* / `6379` | instead of `REDIS_URL`: a standalone server. Setting it enables the Redis section |
+| `REDIS_SENTINELS` | *(unset)* | instead of `REDIS_HOST`: comma-separated `host` or `host:port` (port `26379` by default), connect through Sentinel. Enables the Redis section |
+| `REDIS_SENTINEL_MASTER` | *(unset)* | master name, required with `REDIS_SENTINELS` |
+| `REDIS_SENTINEL_USERNAME` / `_PASSWORD` | *(unset)* | credentials for the sentinels themselves |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` | *(unset)* | credentials for the Redis server (the master in Sentinel mode) |
+| `REDIS_DATABASE` | `0` | logical database, with `REDIS_HOST` or `REDIS_SENTINELS` |
+| `REDIS_TLS` | `false` | TLS to the Redis server. With Sentinel, it applies to the master only: sentinels are reached in plain TCP, so list every sentinel (one discovered at runtime would be dialed with TLS) |
 
 The retention TTL and the stuck-task thresholds are runtime settings, edited in the Settings page or with
 `PUT /api/settings`. They are all off by default.

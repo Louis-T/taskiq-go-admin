@@ -34,12 +34,31 @@ func TestConnectInvalidURL(t *testing.T) {
 	}
 }
 
-func TestConnectSentinelUsesURLCredentialsOnly(t *testing.T) {
+func TestConnectHost(t *testing.T) {
+	c, err := Connect(config.Redis{Addr: "h.example:6380", Username: "u", Password: "pw", DB: 2, TLS: true})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer c.Close()
+	o := c.Redis().(*redis.Client).Options()
+	if o.Addr != "h.example:6380" || o.Username != "u" || o.Password != "pw" || o.DB != 2 {
+		t.Errorf("options = %s user %q pw %q db %d", o.Addr, o.Username, o.Password, o.DB)
+	}
+	if o.TLSConfig == nil || o.TLSConfig.ServerName != "h.example" {
+		t.Errorf("TLSConfig = %+v; want ServerName h.example", o.TLSConfig)
+	}
+}
+
+func TestConnectSentinel(t *testing.T) {
 	c, err := Connect(config.Redis{
-		URL:        "rediss://user:pw@ignored.example:1/2",
-		Sentinels:  []string{"127.0.0.1:1"},
-		MasterName: "mymaster",
-		DB:         4,
+		Sentinels:        []string{"127.0.0.1:1"},
+		MasterName:       "mymaster",
+		Username:         "user",
+		Password:         "pw",
+		SentinelUsername: "su",
+		SentinelPassword: "spw",
+		TLS:              true,
+		DB:               4,
 	})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -54,8 +73,11 @@ func TestConnectSentinelUsesURLCredentialsOnly(t *testing.T) {
 	if o.TLSConfig != nil {
 		t.Error("TLSConfig is set: sentinel connections would use TLS")
 	}
-	if o.Addr == "ignored.example:1" {
-		t.Error("sentinel mode used the REDIS_URL host")
+}
+
+func TestConnectNoAddress(t *testing.T) {
+	if _, err := Connect(config.Redis{Password: "pw"}); err == nil {
+		t.Error("Connect without an address: want error")
 	}
 }
 
@@ -87,7 +109,7 @@ func TestMasterTLSDialer(t *testing.T) {
 	ctx := context.Background()
 
 	// A TLS server whose certificate is valid for 127.0.0.1, not for the
-	// REDIS_URL host that ParseURL puts in ServerName.
+	// placeholder ServerName of the base config.
 	srv := httptest.NewUnstartedServer(nil)
 	// The control handshake below fails on purpose: keep its log line out.
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
