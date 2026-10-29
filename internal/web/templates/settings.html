@@ -38,10 +38,10 @@
       </label>
       <label class="field">
         <span>Keep acknowledged entries for (minutes)</span>
-        <input type="number" name="redis_keep_acked_minutes" min="0" max="{{.Max}}" step="1" value="{{.RedisKeep}}" placeholder="Not set">
+        <input type="number" name="redis_keep_acked_minutes" min="0" max="{{.Max}}" step="1" value="{{.RedisKeep}}" placeholder="0">
       </label>
     </div>
-    <p class="muted small">Leave the interval empty to turn the automatic trim off. 0 minutes trims acknowledged entries as soon as possible. Saving does not trigger a run; the cleaner reads the settings on its next tick.</p>
+    <p class="muted small">Setting the interval turns the automatic trim on; leave it empty to turn it off. The keep age defaults to 0, which trims acknowledged entries as soon as possible. Saving does not trigger a run; the cleaner reads the settings on its next tick.</p>
     {{end}}
     {{if .Error}}<p class="alert alert-error" role="alert">{{.Error}}</p>{{end}}
     {{if .Message}}<p class="alert alert-ok" role="status">{{.Message}}</p>{{end}}

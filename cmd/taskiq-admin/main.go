@@ -82,14 +82,14 @@ func openStore(ctx context.Context, cfg config.Config) (store.Store, error) {
 }
 
 // keepAcked reads the keep-age of acknowledged stream entries from the
-// settings; ok=false when it is not set.
+// settings (0 when unset); ok=false when they can't be read.
 func keepAcked(s store.Store) func(ctx context.Context) (time.Duration, bool) {
 	return func(ctx context.Context) (time.Duration, bool) {
 		set, err := s.GetSettings(ctx)
-		if err != nil || set.RedisKeepAckedMinutes == nil {
+		if err != nil {
 			return 0, false
 		}
-		return time.Duration(*set.RedisKeepAckedMinutes) * time.Minute, true
+		return set.RedisKeepAcked(), true
 	}
 }
 

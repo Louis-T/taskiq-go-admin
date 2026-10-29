@@ -80,12 +80,12 @@
     <h2>Stream cleanup</h2>
     <form method="post" action="/redis/cleanup" hx-post="/redis/cleanup" hx-target="#redis-cleanup" hx-swap="outerHTML">
       <button type="submit" class="btn btn-outline"
-        {{if .Running}}disabled{{else if .Off}}disabled title="Redis is unavailable"{{else if not .KeepAcked}}disabled title="Set a keep-acked age in Settings first"{{end}}>{{if .Running}}Running…{{else}}Clean now{{end}}</button>
+        {{if .Running}}disabled{{else if .Off}}disabled title="Redis is unavailable"{{end}}>{{if .Running}}Running…{{else}}Clean now{{end}}</button>
     </form>
   </div>
   <p>
     {{if .Interval}}Every <b>{{minutesText .Interval}}</b>{{else}}Automatic trim <b>off</b>{{end}}
-    · {{if .KeepAcked}}keep acknowledged entries <b>{{minutesText .KeepAcked}}</b>{{else}}keep age <b>not set</b>{{end}}
+    · keep acknowledged entries {{if .KeepAcked}}<b>{{minutesText .KeepAcked}}</b>{{else}}<b>0 minutes</b> (default){{end}}
     {{with .Last}}{{if .Mode}}· mode <b>{{.Mode}}</b>{{end}}{{end}}
   </p>
   {{with .Last}}

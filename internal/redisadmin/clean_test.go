@@ -26,14 +26,17 @@ func (f *fakeSettings) GetSettings(context.Context) (store.Settings, error) {
 	return f.s, nil
 }
 
-// fakeTrimmer counts runs; when block is set each run waits for it.
+// fakeTrimmer counts runs and records the last keep-age; when block is set
+// each run waits for it.
 type fakeTrimmer struct {
-	runs  atomic.Int64
-	block chan struct{}
+	runs     atomic.Int64
+	lastKeep atomic.Int64
+	block    chan struct{}
 }
 
 func (f *fakeTrimmer) trimAll(ctx context.Context, now time.Time, keep time.Duration) (trimResult, error) {
 	f.runs.Add(1)
+	f.lastKeep.Store(int64(keep))
 	if f.block != nil {
 		select {
 		case <-f.block:
@@ -108,17 +111,23 @@ func TestCleanerScheduleInterval(t *testing.T) {
 	}
 }
 
-func TestCleanerTriggerNeedsKeepAge(t *testing.T) {
+func TestCleanerKeepAgeDefaultsToZero(t *testing.T) {
 	c, _, ft := newFakeCleaner(store.Settings{RedisTrimIntervalMinutes: intp(1)})
+	ft.lastKeep.Store(-1)
 	stop := runLoop(c)
-	if c.Trigger(context.Background()) {
-		t.Error("Trigger() = true without a keep-age")
-	}
-	time.Sleep(50 * time.Millisecond)
+	waitFor(t, "a scheduled run", func() bool { return ft.runs.Load() >= 1 })
 	stop()
-	if n := ft.runs.Load(); n != 0 {
-		t.Errorf("runs = %d; want 0", n)
+	if k := ft.lastKeep.Load(); k != 0 {
+		t.Errorf("keep = %v; want 0 when unset", time.Duration(k))
 	}
+
+	c, _, ft = newFakeCleaner(store.Settings{})
+	stop = runLoop(c)
+	if !c.Trigger(context.Background()) {
+		t.Error("Trigger() = false without a keep-age")
+	}
+	waitFor(t, "the triggered run", func() bool { return ft.runs.Load() == 1 })
+	stop()
 }
 
 func TestCleanerTriggerWhileRunning(t *testing.T) {

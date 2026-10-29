@@ -180,8 +180,16 @@ type Settings struct {
 	// Redis stream entries, run at this interval.
 	RedisTrimIntervalMinutes *int `json:"redis_trim_interval_minutes"`
 	// RedisKeepAckedMinutes is how long acknowledged stream entries are kept
-	// before being trimmed (0 trims them as soon as possible).
+	// before being trimmed (0, the default, trims them as soon as possible).
 	RedisKeepAckedMinutes *int `json:"redis_keep_acked_minutes"`
+}
+
+// RedisKeepAcked is RedisKeepAckedMinutes as a duration, 0 when unset.
+func (s Settings) RedisKeepAcked() time.Duration {
+	if s.RedisKeepAckedMinutes == nil {
+		return 0
+	}
+	return time.Duration(*s.RedisKeepAckedMinutes) * time.Minute
 }
 
 const (

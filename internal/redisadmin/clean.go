@@ -22,8 +22,7 @@ const (
 )
 
 var (
-	errNoKeepAge = errors.New("no keep-age is set for acknowledged entries")
-	errRunning   = errors.New("a cleaning run is already running")
+	errRunning = errors.New("a cleaning run is already running")
 )
 
 // SettingsSource supplies the current settings.
@@ -122,7 +121,7 @@ func (c *Cleaner) Run(ctx context.Context) {
 	}
 }
 
-// tick starts a run when both settings are set and the interval has elapsed
+// tick starts a run when an interval is set and has elapsed
 // since the last run started.
 func (c *Cleaner) tick(ctx context.Context) {
 	s, err := c.settings.GetSettings(ctx)
@@ -132,7 +131,7 @@ func (c *Cleaner) tick(ctx context.Context) {
 		}
 		return
 	}
-	if s.RedisTrimIntervalMinutes == nil || s.RedisKeepAckedMinutes == nil {
+	if s.RedisTrimIntervalMinutes == nil {
 		return
 	}
 	interval := time.Duration(*s.RedisTrimIntervalMinutes) * time.Minute
@@ -148,12 +147,8 @@ func (c *Cleaner) tick(ctx context.Context) {
 }
 
 // Trigger asks the Run loop for a run now. It returns false, doing nothing,
-// when no keep-age is set or a run is already pending or running.
+// when a run is already pending or running.
 func (c *Cleaner) Trigger(ctx context.Context) bool {
-	s, err := c.settings.GetSettings(ctx)
-	if err != nil || s.RedisKeepAckedMinutes == nil {
-		return false
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.running || c.pending {
@@ -189,12 +184,8 @@ func (c *Cleaner) run(ctx context.Context, started time.Time) (RunSummary, error
 	begin := time.Now()
 	var res trimResult
 	s, err := c.settings.GetSettings(ctx)
-	if err == nil && s.RedisKeepAckedMinutes == nil {
-		err = errNoKeepAge
-	}
 	if err == nil {
-		keep := time.Duration(*s.RedisKeepAckedMinutes) * time.Minute
-		res, err = c.trim.trimAll(ctx, started, keep)
+		res, err = c.trim.trimAll(ctx, started, s.RedisKeepAcked())
 	}
 	sum := RunSummary{Started: started, Took: time.Since(begin), Mode: res.mode, Streams: res.streams, Removed: res.removed}
 	if err != nil {

@@ -293,11 +293,14 @@ func TestRedisCleanNow(t *testing.T) {
 	}
 }
 
-func TestRedisCleanNowDisabledWithoutKeepAge(t *testing.T) {
+func TestRedisCleanupDefaultKeepAge(t *testing.T) {
 	e := newRedisEnv(t, &fakeReader{overview: okOverview()}, &fakeCleaner{})
 	_, body := e.get(t, "/redis")
-	if !strings.Contains(body, "Set a keep-acked age in Settings first") {
-		t.Fatalf("no hint:\n%s", body)
+	if !strings.Contains(body, "keep acknowledged entries <b>0 minutes</b> (default)") {
+		t.Fatalf("no default keep-age:\n%s", body)
+	}
+	if strings.Contains(body, "Set a keep-acked age") {
+		t.Fatalf("Clean now still disabled:\n%s", body)
 	}
 }
 

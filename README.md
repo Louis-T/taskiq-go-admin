@@ -92,8 +92,8 @@ The retention TTL and the stuck-task thresholds are runtime settings, edited in 
   30 days have to count every task in the range: 1–10 s at that size. Slow results are reused for up to 30 s, so
   live updates don't pile up, but the first load stays slow. Keeping days rather than months keeps every page fast.
 - **Redis stream cleanup**: taskiq-redis' `RedisStreamBroker` acknowledges messages but never deletes them, so its
-  streams grow forever. The cleanup is off by default; set its interval and keep-age in Settings, or click
-  **Clean now**. **Every stream with a consumer group in that database is trimmed**, taskiq's or not. Only entries
+  streams grow forever. The cleanup is off by default; set its interval in Settings, or click **Clean
+  now**. Acknowledged entries are kept for the keep-age set there, 0 (trim as soon as possible) by default. **Every stream with a consumer group in that database is trimmed**, taskiq's or not. Only entries
   acknowledged by every group are removed: pending or undelivered ones always stay, and a stream without a group is
   never touched. It uses `XTRIM … ACKED` on Redis 8.2+, and a safe cut-off below the oldest unacknowledged entry on
   older versions. Each step re-reads the consumer groups and trims in one atomic Lua script, so a group created,
