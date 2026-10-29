@@ -183,20 +183,27 @@ func failover(t *testing.T, ctx context.Context, from string) string {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	// Sentinel promotes the replica first and demotes the old master a moment
+	// later; until then both accept writes. Wait for both, so a client still
+	// connected to the old master gets READONLY instead of writing there.
 	for {
-		if addr := sentinelMaster(t); addr != from {
-			rc := redis.NewClient(&redis.Options{Addr: addr})
-			info, err := rc.Info(ctx, "replication").Result()
-			rc.Close()
-			if err == nil && strings.Contains(info, "role:master") {
-				return addr
-			}
+		if addr := sentinelMaster(t); addr != from && hasRole(ctx, addr, "master") && hasRole(ctx, from, "slave") {
+			return addr
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no new master after SENTINEL FAILOVER")
+			t.Fatalf("no new master, or old master %s not demoted, after SENTINEL FAILOVER", from)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// hasRole reports whether the server at addr has this replication role
+// ("master" or "slave").
+func hasRole(ctx context.Context, addr, role string) bool {
+	rc := redis.NewClient(&redis.Options{Addr: addr})
+	defer rc.Close()
+	info, err := rc.Info(ctx, "replication").Result()
+	return err == nil && strings.Contains(info, "role:"+role+"\r\n")
 }
 
 // After a failover the client follows the new master, still on db 4: reads,
