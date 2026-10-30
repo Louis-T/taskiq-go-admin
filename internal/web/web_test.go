@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/louis-t/taskiq-go-admin/internal/events"
 	"github.com/louis-t/taskiq-go-admin/internal/ingest"
@@ -213,11 +214,43 @@ func TestIngestOversizedValues(t *testing.T) {
 	if got.State != task.Success || got.Name != "app:upsert" || string(got.Labels) != `{"queue_name":"q"}` || string(got.Kwargs) != `{}` {
 		t.Fatalf("got %+v", got)
 	}
-	if !strings.HasPrefix(string(got.Args), `{"truncated":true,"bytes":2400005,"preview":"[[0.123456789,`) || len(got.Args) > 300 {
+	if !strings.HasPrefix(string(got.Args), `{"truncated":true,"bytes":2400005,"preview":"[[0.123456789,`) || !strings.HasSuffix(string(got.Args), `0.123456789,0]]"}`) || len(got.Args) > 500 {
 		t.Fatalf("oversized args not replaced: %.300s", got.Args)
 	}
 	if !strings.HasPrefix(string(got.ReturnValue), `{"return_value":{"truncated":true,"bytes":2400003,"preview":"[0.123456789,`) {
 		t.Fatalf("oversized return value not replaced: %.300s", got.ReturnValue)
+	}
+}
+
+func TestCapJSONPreviewKeepsBothEnds(t *testing.T) {
+	preview := func(raw string) string {
+		t.Helper()
+		var m struct {
+			Bytes   int    `json:"bytes"`
+			Preview string `json:"preview"`
+		}
+		if err := json.Unmarshal(capJSON(json.RawMessage(raw), 10), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Bytes != len(raw) {
+			t.Errorf("bytes = %d; want %d", m.Bytes, len(raw))
+		}
+		return m.Preview
+	}
+
+	raw := strings.Repeat("a", 1000) + strings.Repeat("b", 1000)
+	if got, want := preview(raw), strings.Repeat("a", previewHeadBytes)+"…"+strings.Repeat("b", previewTailBytes); got != want {
+		t.Errorf("preview = %q; want %q", got, want)
+	}
+	// Both cuts stay on a character boundary.
+	raw = strings.Repeat("é", 1000)
+	if got := preview(raw); !utf8.ValidString(got) || !strings.Contains(got, "é…é") {
+		t.Errorf("preview = %q", got)
+	}
+	// A value shorter than both ends together is not repeated.
+	raw = strings.Repeat("a", previewHeadBytes) + "bcd"
+	if got, want := preview(raw), strings.Repeat("a", previewHeadBytes)+"…bcd"; got != want {
+		t.Errorf("preview = %q; want %q", got, want)
 	}
 }
 

@@ -126,24 +126,31 @@ func normalizeJSON(raw json.RawMessage) json.RawMessage {
 	return bytes.TrimRight(buf.Bytes(), "\n")
 }
 
-// previewBytes is how much of an oversized value its marker keeps.
-const previewBytes = 200
+// How much of the beginning and the end of an oversized value its marker keeps.
+const (
+	previewHeadBytes = 200
+	previewTailBytes = 200
+)
 
 // capJSON replaces a value longer than limit bytes (0: no limit) with a
-// marker recording its size and its beginning.
+// marker recording its size, its beginning and its end.
 func capJSON(raw json.RawMessage, limit int) json.RawMessage {
 	if limit <= 0 || len(raw) <= limit {
 		return raw
 	}
-	cut := min(previewBytes, len(raw))
+	cut := min(previewHeadBytes, len(raw))
 	for cut > 0 && cut < len(raw) && !utf8.RuneStart(raw[cut]) {
 		cut--
+	}
+	tail := max(len(raw)-previewTailBytes, cut)
+	for tail < len(raw) && !utf8.RuneStart(raw[tail]) {
+		tail++
 	}
 	marker, _ := json.Marshal(struct {
 		Truncated bool   `json:"truncated"`
 		Bytes     int    `json:"bytes"`
 		Preview   string `json:"preview"`
-	}{true, len(raw), string(raw[:cut]) + "…"})
+	}{true, len(raw), string(raw[:cut]) + "…" + string(raw[tail:])})
 	return marker
 }
 

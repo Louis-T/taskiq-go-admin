@@ -73,7 +73,7 @@ Open http://localhost:3000.
 | `TASKIQ_ADMIN_PURGE_BATCH_SIZE` / `_PAUSE` | `1000` / `50ms` | rows per cleanup transaction, pause between batches |
 | `TASKIQ_ADMIN_INGEST_MAX_BATCH` | `500` | most events committed in one transaction |
 | `TASKIQ_ADMIN_MAX_BODY_BYTES` | `67108864` | largest middleware report accepted (64 MiB); a bigger one loses that lifecycle step |
-| `TASKIQ_ADMIN_MAX_VALUE_BYTES` | `65536` | args, kwargs or return value stored whole up to this size (64 KiB); a bigger one is stored as `{"truncated":true,"bytes":N,"preview":"…"}` |
+| `TASKIQ_ADMIN_MAX_VALUE_BYTES` | `65536` | args, kwargs or return value stored whole up to this size (64 KiB); a bigger one is stored as `{"truncated":true,"bytes":N,"preview":"…"}`, the preview keeping its first 200 and last 200 bytes |
 | `TASKIQ_ADMIN_LOG_LEVEL` | `info` | `debug` also logs each request |
 | `REDIS_URL` | *(unset)* | `redis://`, `rediss://` or `unix://` URL holding the whole connection (database in the `/N` path, or `?db=N` for `unix://`). Enables the Redis section. It cannot be combined with the variables below |
 | `REDIS_HOST` / `REDIS_PORT` | *(unset)* / `6379` | instead of `REDIS_URL`: a standalone server. Setting it enables the Redis section |
